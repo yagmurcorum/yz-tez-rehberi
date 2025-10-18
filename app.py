@@ -272,14 +272,21 @@ SYSTEM_MSG = (
 def retrieve(query: str, k: int):
     """
     Sorgu embedding'i ile Chroma'dan en ilgili k belge parçasını getirir.
-    DÜZELTME: Relevance score filtresi eklendi - sadece 0.5+ skorlu belgeleri kabul et
-    Bu sayede alakasız sayfalar kaynak olarak gösterilmez.
+    DÜZELTME: Relevance score filtresi eklendi - çok düşük skorlu belgeleri filtrele
+    Threshold: 0.3 (daha esnek, ama çok alakasız belgeleri atar)
     """
     try:
         results = vectorstore.similarity_search_with_relevance_scores(query, k=k)
-        # DÜZELTME: 0.5'in altındaki skorları filtrele (düşük ilgili belgeleri at)
-        filtered = [(doc, score) for doc, score in results if score >= 0.5]
-        print(f"🔍 Toplam {len(results)} belge, {len(filtered)} yüksek skorlu belge seçildi")
+        # DÜZELTME: 0.3'ün altındaki skorları filtrele (çok düşük skorlu belgeleri at)
+        # Not: Eğer hiç belge kalmazsa, en yüksek skorlu 3 belgeyi al
+        filtered = [(doc, score) for doc, score in results if score >= 0.3]
+        
+        # Eğer hiçbir belge 0.3'ü geçemezse, en iyi 3'ü al
+        if not filtered and results:
+            filtered = results[:3]
+            print(f"⚠️ Hiç yüksek skorlu belge yok, en iyi {len(filtered)} belge kullanılıyor")
+        
+        print(f"🔍 Toplam {len(results)} belge, {len(filtered)} belge seçildi")
         for doc, score in filtered[:3]:  # İlk 3'ü logla
             meta = doc.metadata or {}
             page = page_label(meta)
