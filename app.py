@@ -272,29 +272,25 @@ SYSTEM_MSG = (
 def retrieve(query: str, k: int):
     """
     Sorgu embedding'i ile Chroma'dan en ilgili k belge parçasını getirir.
-    DÜZELTME: Relevance score filtresi eklendi - çok düşük skorlu belgeleri filtrele
-    Threshold: 0.35 (daha sıkı, sadece gerçekten alakalı belgeleri alır)
+    DÜZELTME: Chroma negatif skorlar döndürdüğü için threshold kontrolü kaldırıldı
+    En yüksek skorlu K belgeyi doğrudan kullan (skor ne olursa olsun)
     """
     try:
+        # Önce score ile dene
         results = vectorstore.similarity_search_with_relevance_scores(query, k=k)
-        # DÜZELTME: 0.35'in altındaki skorları filtrele (alakasız belgeleri at)
-        # Not: Eğer hiç belge kalmazsa, en yüksek skorlu 2 belgeyi al
-        filtered = [(doc, score) for doc, score in results if score >= 0.35]
         
-        # Eğer hiçbir belge 0.35'i geçemezse, en iyi 2'yi al
-        if not filtered and results:
-            filtered = results[:2]
-            print(f"⚠️ Hiç yüksek skorlu belge yok, en iyi {len(filtered)} belge kullanılıyor")
-        
-        print(f"🔍 Toplam {len(results)} belge, {len(filtered)} belge seçildi")
-        for doc, score in filtered[:3]:  # İlk 3'ü logla
+        # Skorları logla (debug için)
+        print(f"🔍 Toplam {len(results)} belge bulundu")
+        for i, (doc, score) in enumerate(results[:3], 1):
             meta = doc.metadata or {}
             page = page_label(meta)
-            print(f"   📄 Sayfa {page}, skor: {score:.3f}")
-        docs = [doc for doc, _score in filtered]
+            print(f"   📄 Belge {i}: Sayfa {page}, skor: {score:.3f}")
+        
+        # DÜZELTME: Threshold kontrolü YOK - tüm belgeleri al
+        docs = [doc for doc, _score in results]
         return docs
     except Exception as e:
-        print(f"❌ Relevance score hatası: {e}")
+        print(f"⚠️ Score hatası, fallback kullanılıyor: {e}")
         # Fallback: score olmadan normal arama
         docs = vectorstore.similarity_search(query, k=k)
         return docs
