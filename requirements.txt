@@ -1,8 +1,8 @@
-gradio==4.44.0
-langchain-chroma==0.1.1
-langchain-huggingface==0.0.1
-chromadb==0.4.22
-pandas==2.1.4
-google-generativeai==0.3.2
-sentence-transformers==2.2.2
-pyarrow==17.0.0
+echo gradio==4.44.0 > requirements.txt
+echo langchain-chroma==0.1.1 >> requirements.txt
+echo langchain-huggingface==0.0.1 >> requirements.txt
+echo chromadb==0.4.22 >> requirements.txt
+echo pandas==2.1.4 >> requirements.txt
+echo google-generativeai==0.3.2 >> requirements.txt
+echo sentence-transformers==2.2.2 >> requirements.txt
+echo pyarrow==17.0.0 >> requirements.txt
