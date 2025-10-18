@@ -1,9 +1,8 @@
-langchain==0.2.16
+gradio==4.44.0
 langchain-chroma==0.1.1
 langchain-huggingface==0.0.1
 chromadb==0.4.22
 sentence-transformers==2.2.2
 google-generativeai==0.3.2
-gradio==4.44.0
 pandas==2.1.4
 pyarrow==17.0.0
