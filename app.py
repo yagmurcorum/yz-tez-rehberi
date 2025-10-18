@@ -63,10 +63,10 @@ CHROMA_PERSIST_DIR = os.getenv("CHROMA_PERSIST_DIR", ".chroma")
 ALLOW_OPEN_DOMAIN_FALLBACK = os.getenv("ALLOW_OPEN_DOMAIN_FALLBACK", "false").lower() == "true"
 
 # Sayfa filtreleme: PDF sayfa 13-104 arası tez içeriği (1-12: ön sayfalar, 105+: kaynakça/ekler)
-PDF_PAGE_START = int(os.getenv("PDF_PAGE_START", "13"))   # DÜN ÇALIŞAN DEĞER
-PDF_PAGE_END = int(os.getenv("PDF_PAGE_END", "104"))     # DÜN ÇALIŞAN DEĞER
+PDF_PAGE_START = int(os.getenv("PDF_PAGE_START", "13"))
+PDF_PAGE_END = int(os.getenv("PDF_PAGE_END", "104"))
 # DÜZELTME: Offset değeri -12'den 0'a değiştirildi (negatif sayfa numaraları önlemek için)
-PDF_TO_THESIS_OFFSET = int(os.getenv("PDF_TO_THESIS_OFFSET", "0"))  # DÜZELTME: -12 → 0
+PDF_TO_THESIS_OFFSET = int(os.getenv("PDF_TO_THESIS_OFFSET", "0"))
 
 # Gemini istemcisi; API anahtarı zorunludur.
 genai.configure(api_key=GOOGLE_API_KEY)
@@ -137,15 +137,11 @@ def split_into_chunks(text: str, size: int = 800, overlap: int = 120) -> List[st
 
 def is_valid_page(page_num: int) -> bool:
     """
-    Sayfa filtreleme - GEÇİCİ OLARAK KAPATILDI
-    DEBUG: Metadata formatı farklı olduğu için geçici olarak kapatıldı.
-    Gerçek format: {'page_start': 1, 'page_end': 1} (page field'ı yok)
+    Sayfa filtreleme: PDF sayfa 13-104 arası tez içeriği
+    (1-12: ön sayfalar, 105+: kaynakça/ekler)
+    DÜZELTME: Filtreleme aktif (Kaggle'da tüm PDF işlendiği için burada filtre gerekli)
     """
-    # GEÇİCİ: Tüm sayfaları kabul et
-    return True
-    
-    # Orijinal kod (kapalı):
-    # return PDF_PAGE_START <= page_num <= PDF_PAGE_END
+    return PDF_PAGE_START <= page_num <= PDF_PAGE_END
 
 
 def pdf_to_thesis_page(pdf_page: int) -> int:
@@ -182,6 +178,7 @@ def ingest_jsonl(file_obj) -> str:
     """
     JSONL dosyasını satır satır okuyup metin + metadata çıkarır ve Chroma'ya ekler.
     DEBUG: Metadata formatı kontrol edilir ve loglanır.
+    DÜZELTME: Sayfa filtreleme aktif (page_start field'ı kullanılıyor)
     """
     try:
         lines = file_obj.read().decode("utf-8").splitlines()
@@ -199,10 +196,10 @@ def ingest_jsonl(file_obj) -> str:
             if len(texts) < 3:
                 print(f"🔍 Metadata {len(texts)+1}: {meta}")
             
-            # Sayfa filtreleme (şimdi kapalı - tüm sayfalar kabul ediliyor)
-            # page_num = meta.get("page")
-            # if page_num and not is_valid_page(int(page_num)):
-            #     continue
+            # DÜZELTME: Sayfa filtreleme AÇIK - page_start field'ını kullan
+            page_num = meta.get("page_start")
+            if page_num and not is_valid_page(int(page_num)):
+                continue
                 
             texts.append(content)
             metas.append(meta)
@@ -221,6 +218,7 @@ def ingest_parquet(file_obj) -> str:
     """
     Parquet dosyasını okuyup "content" ve (varsa) "meta" bilgilerini alır ve Chroma'ya ekler.
     DEBUG: Metadata formatı kontrol edilir ve loglanır.
+    DÜZELTME: Sayfa filtreleme aktif (page_start field'ı kullanılıyor)
     """
     try:
         df = pd.read_parquet(file_obj)
@@ -240,10 +238,10 @@ def ingest_parquet(file_obj) -> str:
                     if pd.notna(val) and val != "":
                         meta.setdefault(key, val)
             
-            # Sayfa filtreleme (şimdi kapalı - tüm sayfalar kabul ediliyor)
-            # page_num = meta.get("page")
-            # if page_num and not is_valid_page(int(page_num)):
-            #     continue
+            # DÜZELTME: Sayfa filtreleme AÇIK - page_start field'ını kullan
+            page_num = meta.get("page_start")
+            if page_num and not is_valid_page(int(page_num)):
+                continue
                 
             texts.append(content)
             metas.append(meta)
