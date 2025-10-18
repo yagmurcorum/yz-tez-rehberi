@@ -90,7 +90,8 @@ RESPONSE_LENGTH_TO_TOKENS = {
     "Uzun": 1500    # Çok uzun, kapsamlı yanıt
 }
 DEFAULT_RESPONSE_LENGTH = os.getenv("DEFAULT_RESPONSE_LENGTH", "Orta")
-CURRENT_TOP_K = int(os.getenv("CURRENT_TOP_K", "10"))
+# DÜZELTME: Top-K değeri 10'dan 5'e düşürüldü - daha az gürültü, daha alakalı sonuçlar
+CURRENT_TOP_K = int(os.getenv("CURRENT_TOP_K", "5"))
 
 
 # --------------------------------------------------------------------------------------------------
@@ -259,12 +260,11 @@ def ingest_parquet(file_obj) -> str:
 #    - build_prompt: Sistem talimatı + bağlam + soru birleşiminden Gemini istemini kurar.
 #    - generate_with_gemini: Yanıt üretir; metin döndürür.
 # --------------------------------------------------------------------------------------------------
-# DÜZELTME: Strict RAG modu - sadece bağlamdan yanıt ver, uydurma yapma
+# DÜZELTME: Sistem mesajı - bağlamdaki bilgileri kullan ama çok katı olma
 SYSTEM_MSG = (
-    "SADECE aşağıdaki bağlam parçalarını kullanarak yanıt ver. "
-    "Bağlamda olmayan hiçbir bilgi ekleme, uydurma veya genel bilgini kullanma. "
-    "Eğer bağlamda yeterli bilgi yoksa: 'Bu konu tezde bulunamadı.' de. "
-    "Bağlamdaki TÜM isimleri, tarihleri ve detayları MUTLAKA dahil et. "
+    "Aşağıdaki bağlam parçalarını kullanarak yanıt ver. "
+    "Bağlamda verilen TÜM ilgili bilgileri, tarihleri, isimleri ve detayları MUTLAKA dahil et. "
+    "Eğer bağlamda yeterli bilgi yoksa: 'Bu konu tezde yeterli detayla bulunamadı.' de. "
     "Yanıtı tam cümlelerle bitir; maddeleri yarım bırakma."
 )
 
@@ -273,17 +273,17 @@ def retrieve(query: str, k: int):
     """
     Sorgu embedding'i ile Chroma'dan en ilgili k belge parçasını getirir.
     DÜZELTME: Relevance score filtresi eklendi - çok düşük skorlu belgeleri filtrele
-    Threshold: 0.3 (daha esnek, ama çok alakasız belgeleri atar)
+    Threshold: 0.35 (daha sıkı, sadece gerçekten alakalı belgeleri alır)
     """
     try:
         results = vectorstore.similarity_search_with_relevance_scores(query, k=k)
-        # DÜZELTME: 0.3'ün altındaki skorları filtrele (çok düşük skorlu belgeleri at)
-        # Not: Eğer hiç belge kalmazsa, en yüksek skorlu 3 belgeyi al
-        filtered = [(doc, score) for doc, score in results if score >= 0.3]
+        # DÜZELTME: 0.35'in altındaki skorları filtrele (alakasız belgeleri at)
+        # Not: Eğer hiç belge kalmazsa, en yüksek skorlu 2 belgeyi al
+        filtered = [(doc, score) for doc, score in results if score >= 0.35]
         
-        # Eğer hiçbir belge 0.3'ü geçemezse, en iyi 3'ü al
+        # Eğer hiçbir belge 0.35'i geçemezse, en iyi 2'yi al
         if not filtered and results:
-            filtered = results[:3]
+            filtered = results[:2]
             print(f"⚠️ Hiç yüksek skorlu belge yok, en iyi {len(filtered)} belge kullanılıyor")
         
         print(f"🔍 Toplam {len(results)} belge, {len(filtered)} belge seçildi")
@@ -410,9 +410,9 @@ def answer_fn(message: str, history: List[Tuple[str, str]], length_choice: str) 
         max_tokens = RESPONSE_LENGTH_TO_TOKENS.get(length_choice, RESPONSE_LENGTH_TO_TOKENS["Orta"])
         answer = generate_with_gemini(prompt, max_tokens=max_tokens)
 
-        # DÜZELTME: Eğer Gemini "bilmiyorum" veya "bulunamadı" derse, kaynak gösterme
-        if not answer or any(x in answer.lower() for x in ["bilmiyorum", "bulunamadı", "bilgi yok"]):
-            return "Bu konu tezde bulunamadı."
+        # DÜZELTME: Sadece çok kesin "bulunamadı" cevaplarında kaynak gösterme
+        if not answer:
+            return "Yanıt üretilemedi."
 
         # DEBUG: Kaynak oluşturma
         pages_by_source = {}
