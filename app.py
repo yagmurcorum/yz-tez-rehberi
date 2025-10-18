@@ -136,6 +136,8 @@ def split_into_chunks(text: str, size: int = 800, overlap: int = 120) -> List[st
 def is_valid_page(page_num: int) -> bool:
     """
     Sayfa filtreleme - GEÇİCİ OLARAK KAPATILDI
+    DEBUG: Metadata formatı farklı olduğu için geçici olarak kapatıldı.
+    Gerçek format: {'page_start': 1, 'page_end': 1} (page field'ı yok)
     """
     # GEÇİCİ: Tüm sayfaları kabul et
     return True
@@ -176,6 +178,7 @@ vectorstore = Chroma(
 def ingest_jsonl(file_obj) -> str:
     """
     JSONL dosyasını satır satır okuyup metin + metadata çıkarır ve Chroma'ya ekler.
+    DEBUG: Metadata formatı kontrol edilir ve loglanır.
     """
     try:
         lines = file_obj.read().decode("utf-8").splitlines()
@@ -214,6 +217,7 @@ def ingest_jsonl(file_obj) -> str:
 def ingest_parquet(file_obj) -> str:
     """
     Parquet dosyasını okuyup "content" ve (varsa) "meta" bilgilerini alır ve Chroma'ya ekler.
+    DEBUG: Metadata formatı kontrol edilir ve loglanır.
     """
     try:
         df = pd.read_parquet(file_obj)
@@ -281,6 +285,7 @@ def build_prompt(query: str, docs, length_choice: str) -> str:
       - Bağlam: numaralı satırlar; kaynak adı ve sayfa bilgisi görünür
       - Kullanıcı sorusu
       - Yanıt uzunluğu talimatı
+    DÜZELTME: Metadata formatı farklı olduğu için page_start kullanılıyor.
     """
     # Yanıt uzunluğu talimatı
     length_instructions = {
@@ -293,7 +298,8 @@ def build_prompt(query: str, docs, length_choice: str) -> str:
     for i, d in enumerate(docs, start=1):
         meta = d.metadata or {}
         src = meta.get("source", "unknown")
-        page = meta.get("page", "?")
+        # DÜZELTME: page_start kullan (gerçek metadata formatı)
+        page = meta.get("page_start", meta.get("page", "?"))
         
         # PDF sayfa numarasını tez sayfa numarasına dönüştür
         try:
@@ -342,6 +348,7 @@ def polish_style(raw_answer: str) -> str:
 def answer_fn(message: str, history: List[Tuple[str, str]], length_choice: str) -> str:
     """
     ChatInterface tarafından çağrılır.
+    DEBUG: Metadata formatı farklı olduğu için page_start kullanılıyor.
     """
     try:
         # Basit selamlama ve tez dışı sorular için kontrol
@@ -359,7 +366,7 @@ def answer_fn(message: str, history: List[Tuple[str, str]], length_choice: str) 
         # DEBUG: Metadata'ları kontrol et
         for i, doc in enumerate(docs[:3]):  # İlk 3 belgeyi kontrol et
             meta = doc.metadata or {}
-            print(f"📄 Belge {i+1}: page={meta.get('page')}, source={meta.get('source')}")
+            print(f"📄 Belge {i+1}: page={meta.get('page')}, page_start={meta.get('page_start')}, source={meta.get('source')}")
 
         prompt = build_prompt(message, docs, length_choice)
         max_tokens = RESPONSE_LENGTH_TO_TOKENS.get(length_choice, RESPONSE_LENGTH_TO_TOKENS["Orta"])
@@ -370,7 +377,8 @@ def answer_fn(message: str, history: List[Tuple[str, str]], length_choice: str) 
         for d in docs:
             m = d.metadata or {}
             display_name = "Yapay Zekâ Dil Modelleri"
-            pdf_page = m.get("page", "?")
+            # DÜZELTME: page_start kullan (gerçek metadata formatı)
+            pdf_page = m.get("page_start", m.get("page", "?"))
             print(f"🔍 PDF sayfa: {pdf_page}")
             
             try:
@@ -419,6 +427,7 @@ def answer_fn(message: str, history: List[Tuple[str, str]], length_choice: str) 
 def auto_ingest_from_repo() -> str:
     """
     Uygulama başlarken veri klasöründeki dosyaları ingest eder.
+    DEBUG: Her adım loglanır ve kontrol edilir.
     """
     logs = []
     print("🚀 Auto ingest başlıyor...")
@@ -586,7 +595,8 @@ with gr.Blocks(title="Yapay Zekâ Dil Modelleri • Kaynaklı Soru‑Cevap", the
         # Sol panel: Tez indirme + estetik içindekiler + yanıt uzunluğu seçimi
         with gr.Column(scale=1, min_width=400):
             gr.Markdown("### 📄 Tez Dokümanı")
-            gr.DownloadButton(label="📄 Tezi İndir (PDF)", value="data/tez.pdf")
+            # DÜZELTME: Doğru dosya adı (metadata'da görülen)
+            gr.DownloadButton(label="📄 Tezi İndir (PDF)", value="data/yapayzekadilmodelleri.pdf")
 
             gr.Markdown("### 📚 İçindekiler")
             gr.HTML(
