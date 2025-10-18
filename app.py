@@ -272,15 +272,11 @@ SYSTEM_MSG = (
 def retrieve(query: str, k: int):
     """
     Sorgu embedding'i ile Chroma'dan en ilgili k belge parçasını getirir.
-    
-    ÇÖZÜM 1 UYGULANMIŞ: Sayfa Aralığı Filtresi (13-30)
-    - Dartmouth Konferansı ve ELIZA bilgileri sayfa 13-30 arasında yer alır
-    - Bu kritik bölge öncelikli olarak aranır ve sonuçlar bu bölgeden seçilir
-    - Alakasız sayfalar (sayfa 68, 97 vb) bu filtreleme ile elenir
-    - Eğer kritik bölümde belge bulunamazsa, tüm sonuçlardan en iyi K belge alınır
+    DÜZELTME: Chroma negatif skorlar döndürdüğü için threshold kontrolü kaldırıldı
+    En yüksek skorlu K belgeyi doğrudan kullan (skor ne olursa olsun)
     """
     try:
-        # Önce similarity_search_with_relevance_scores ile skorlu arama yap
+        # Önce score ile dene
         results = vectorstore.similarity_search_with_relevance_scores(query, k=k)
         
         # Skorları logla (debug için)
@@ -290,33 +286,9 @@ def retrieve(query: str, k: int):
             page = page_label(meta)
             print(f"   📄 Belge {i}: Sayfa {page}, skor: {score:.3f}")
         
-        # ÇÖZÜM 1: Sayfa Aralığı Filtresi (13-30)
-        # Dartmouth Konferansı (sayfa 16) ve ELIZA (sayfa 16) bu aralıkta yer alır
-        # Kritik bölge: sayfa 13-30 (Giriş ve Yapay Zekâ Tarihçesi)
-        CRITICAL_SECTION_START = 13
-        CRITICAL_SECTION_END = 30
-        
-        # Sonuçlardan sayfa 13-30 aralığında olanları filtrele
-        filtered = []
-        for doc, score in results:
-            meta = doc.metadata or {}
-            page = meta.get("page_start")
-            # page_start metadata'sında sayfa numarası varsa ve 13-30 aralığında ise al
-            if page and CRITICAL_SECTION_START <= page <= CRITICAL_SECTION_END:
-                filtered.append((doc, score))
-        
-        # Eğer kritik bölümde (13-30) belgeler bulunduysa onları kullan
-        if filtered:
-            filtered = filtered[:k]
-            print(f"✅ Sayfa 13-30'dan {len(filtered)} belge seçildi (kritik bölge)")
-        else:
-            # Kritik bölümde belge yoksa, tüm sonuçlardan en iyi K'yı al
-            filtered = results[:k]
-            print(f"⚠️ Sayfa 13-30'da belge bulunamadı, tüm sonuçlardan seçiliyor")
-        
-        docs = [doc for doc, _score in filtered]
+        # DÜZELTME: Threshold kontrolü YOK - tüm belgeleri al
+        docs = [doc for doc, _score in results]
         return docs
-        
     except Exception as e:
         print(f"⚠️ Score hatası, fallback kullanılıyor: {e}")
         # Fallback: score olmadan normal arama
@@ -407,7 +379,6 @@ def answer_fn(message: str, history: List[Tuple[str, str]], length_choice: str) 
     """
     ChatInterface tarafından çağrılır.
     DEBUG: Metadata formatı farklı olduğu için page_start kullanılıyor.
-    DÜZELTME: polish_style() kaldırıldı, kaynak bloğu artık korunuyor
     DÜZELTME: Relevance score kontrolü eklendi - alakasız belgeler filtreleniyor
     DÜZELTME: Boş sonuç kontrolü eklendi - bağlamda bilgi yoksa uyarı ver
     """
@@ -425,34 +396,29 @@ def answer_fn(message: str, history: List[Tuple[str, str]], length_choice: str) 
         if not docs:
             return "Bu konu tezde bulunamadı veya sorunuzla yeterince ilgili değil."
 
-        # DEBUG: Metadata'ları kontrol et
-        for i, doc in enumerate(docs[:3]):  # İlk 3 belgeyi kontrol et
-            meta = doc.metadata or {}
-            print(f"📄 Belge {i+1}: page={meta.get('page')}, page_start={meta.get('page_start')}, source={meta.get('source')}")
-
         prompt = build_prompt(message, docs, length_choice)
         max_tokens = RESPONSE_LENGTH_TO_TOKENS.get(length_choice, RESPONSE_LENGTH_TO_TOKENS["Orta"])
         answer = generate_with_gemini(prompt, max_tokens=max_tokens)
 
-        # DÜZELTME: Sadece çok kesin "bulunamadı" cevaplarında kaynak gösterme
+        # DÜZELTME: Tezde bulunamadıysa veya yanıt boşsa kaynak gösterme
         if not answer:
             return "Yanıt üretilemedi."
+        
+        # DÜZELTME: Gemini "bulunamadı" derse kaynak gösterme
+        if "bulunamadı" in answer.lower() or "yeterli detay" in answer.lower():
+            return answer  # Sadece cevap, kaynak yok
 
-        # DEBUG: Kaynak oluşturma
+        # Kaynak oluşturma
         pages_by_source = {}
         for d in docs:
             m = d.metadata or {}
             display_name = "Yapay Zekâ Dil Modelleri"
             # DÜZELTME: Sayfa etiketleme sistemi kullanılıyor
             page_display = page_label(m)
-            print(f"🔍 Sayfa etiketi: {page_display}")
             
             # Sayfa numarasını kaynak listesine ekle (tekrarları önlemek için set kullanılıyor)
             if page_display != "?":
                 pages_by_source.setdefault(display_name, set()).add(page_display)
-                print(f"✅ Kaynak sayfa: {page_display}")
-
-        print(f"📚 Kaynak sayfalar: {pages_by_source}")
 
         # Kaynak bloğu oluştur
         if pages_by_source:
@@ -469,13 +435,10 @@ def answer_fn(message: str, history: List[Tuple[str, str]], length_choice: str) 
             
             # Tek kaynak varsa "Kaynak:", birden fazlaysa "Kaynaklar:"
             sources_block = "Kaynak: " + items[0][2:] if len(items) == 1 else "Kaynaklar:\n" + "\n".join(items)
-            print(f"📝 Kaynak bloğu: {sources_block}")
         else:
             # DÜZELTME: Eğer hiç kaynak yoksa, kaynak bloğu ekleme
             sources_block = ""
-            print("❌ Hiç kaynak sayfası bulunamadı!")
 
-        # DÜZELTME: polish_style() KALDIRILDI - kaynak bloğu artık korunuyor
         # Yanıt + kaynak bloğunu doğrudan birleştir
         if sources_block:
             final_answer = (answer or "Yanıt üretilemedi.").rstrip() + "\n\n" + sources_block
