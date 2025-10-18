@@ -75,11 +75,12 @@ genai.configure(api_key=GOOGLE_API_KEY)
 # - temperature: RAG'de düşük tutulur (0.0–0.3 aralığı), kaynağa sadakat artar.
 # - top_p/top_k: Örnekleme çeşitliliği; varsayılanlar korunur, gerekirse ayarlanır.
 # - max_output_tokens: Cevabın üst uzunluğu; kesilme yaşanırsa artırılabilir (ör. 768/1024).
+# DÜZELTME: Token limiti 512'den 1024'e artırıldı (cümlelerin yarım kalmasını önlemek için)
 GENERATION_CFG = dict(
     temperature=0.25,
     top_p=0.95,
     top_k=40,
-    max_output_tokens=1024
+    max_output_tokens=1024  # DÜZELTME: 512 → 1024
 )
 
 # Yanıt uzunluğu ön ayarları (STRICT RAG) - GERÇEKTEN FARK EDECEK DEĞERLER
@@ -260,6 +261,7 @@ def ingest_parquet(file_obj) -> str:
 #    - build_prompt: Sistem talimatı + bağlam + soru birleşiminden Gemini istemini kurar.
 #    - generate_with_gemini: Yanıt üretir; metin döndürür.
 # --------------------------------------------------------------------------------------------------
+# DÜZELTME: Sistem mesajına "tam cümle" talimatı eklendi (cümlelerin yarım kalmasını önlemek için)
 SYSTEM_MSG = (
     "Aşağıdaki bağlam parçalarını kullanarak yanıt ver. "
     "Kaynaklarda yoksa 'Bilmiyorum' de. "
@@ -280,6 +282,33 @@ def retrieve(query: str, k: int):
         return docs
 
 
+def page_label(meta: dict) -> str:
+    """
+    Metadata'dan sayfa etiketini çıkarır.
+    Öncelik sırası: page_label > logical_page > page_start/page_end > page (offset ile)
+    """
+    # 1) Açık etiket
+    if meta.get("page_label"): 
+        return str(meta["page_label"])
+    if meta.get("logical_page"):
+        return str(meta["logical_page"])
+    
+    # 2) Aralık
+    if meta.get("page_start") and meta.get("page_end"):
+        return f"{meta['page_start']}-{meta['page_end']}"
+    if meta.get("page_start"):
+        return str(meta["page_start"])
+    
+    # 3) Fallback: PDF sayfasına offset uygula
+    if meta.get("page") is not None:
+        try:
+            return str(int(meta["page"]) + PDF_TO_THESIS_OFFSET)
+        except Exception:
+            return str(meta["page"])
+    
+    return "?"
+
+
 def build_prompt(query: str, docs, length_choice: str) -> str:
     """
     Gemini'ye verilecek istem (prompt):
@@ -287,7 +316,7 @@ def build_prompt(query: str, docs, length_choice: str) -> str:
       - Bağlam: numaralı satırlar; kaynak adı ve sayfa bilgisi görünür
       - Kullanıcı sorusu
       - Yanıt uzunluğu talimatı
-    DÜZELTME: Metadata formatı farklı olduğu için page_start kullanılıyor.
+    DÜZELTME: Sayfa etiketleme sistemi eklendi (belge sayfa numaralarını göstermek için)
     """
     # Yanıt uzunluğu talimatı
     length_instructions = {
@@ -300,18 +329,9 @@ def build_prompt(query: str, docs, length_choice: str) -> str:
     for i, d in enumerate(docs, start=1):
         meta = d.metadata or {}
         src = meta.get("source", "unknown")
-        # DÜZELTME: page_start kullan (gerçek metadata formatı)
-        page = meta.get("page_start", meta.get("page", "?"))
-        
-        # PDF sayfa numarasını tez sayfa numarasına dönüştür
-        try:
-            pdf_page_int = int(page)
-            thesis_page = pdf_to_thesis_page(pdf_page_int)
-            page_display = f"syf. {thesis_page}"
-        except (ValueError, TypeError):
-            page_display = f"syf. {page}"
-            
-        ctx_lines.append(f"[{i}] ({src} {page_display}) {d.page_content}")
+        # DÜZELTME: Sayfa etiketleme sistemi kullanılıyor
+        page_display = page_label(meta)
+        ctx_lines.append(f"[{i}] ({src} s.{page_display}) {d.page_content}")
     
     context = "\n\n".join(ctx_lines) if ctx_lines else "(bağlam yok)"
     length_instruction = length_instructions.get(length_choice, length_instructions["Orta"])
@@ -379,31 +399,29 @@ def answer_fn(message: str, history: List[Tuple[str, str]], length_choice: str) 
         for d in docs:
             m = d.metadata or {}
             display_name = "Yapay Zekâ Dil Modelleri"
-            # DÜZELTME: page_start kullan (gerçek metadata formatı)
-            pdf_page = m.get("page_start", m.get("page", "?"))
-            print(f"🔍 PDF sayfa: {pdf_page}")
+            # DÜZELTME: Sayfa etiketleme sistemi kullanılıyor
+            page_display = page_label(m)
+            print(f"🔍 Sayfa etiketi: {page_display}")
             
-            try:
-                pdf_page_int = int(pdf_page)
-                thesis_page = pdf_to_thesis_page(pdf_page_int)
-                pages_by_source.setdefault(display_name, set()).add(str(thesis_page))
-                print(f"✅ Tez sayfa: {thesis_page}")
-            except (ValueError, TypeError):
-                pages_by_source.setdefault(display_name, set()).add(str(pdf_page))
-                print(f"❌ Sayfa dönüşüm hatası: {pdf_page}")
+            # Sayfa numarasını kaynak listesine ekle
+            if page_display != "?":
+                pages_by_source.setdefault(display_name, set()).add(page_display)
+                print(f"✅ Kaynak sayfa: {page_display}")
 
         print(f"📚 Kaynak sayfalar: {pages_by_source}")
 
         # Kaynak bloğu oluştur
         if pages_by_source:
             def sort_key(p: str):
+                # Sayfa numarasını çıkar (örn: "1-2" → "1")
                 head = str(p).split("-")[0]
                 return int(head) if head.isdigit() else 10**9
 
             items = []
             for src, pages in pages_by_source.items():
                 ordered = ", ".join(sorted(pages, key=sort_key))
-                items.append(f"- {src} syf. {ordered}")
+                # DÜZELTME: "syf." yerine "s." kullanılıyor
+                items.append(f"- {src} s. {ordered}")
             
             sources_block = "Kaynak: " + items[0][2:] if len(items) == 1 else "Kaynaklar:\n" + "\n".join(items)
             print(f"📝 Kaynak bloğu: {sources_block}")
