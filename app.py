@@ -259,11 +259,12 @@ def ingest_parquet(file_obj) -> str:
 #    - build_prompt: Sistem talimatı + bağlam + soru birleşiminden Gemini istemini kurar.
 #    - generate_with_gemini: Yanıt üretir; metin döndürür.
 # --------------------------------------------------------------------------------------------------
-# DÜZELTME: Sistem mesajı güncellendi - bağlamdaki bilgileri MUTLAKA kullan talimatı eklendi
+# DÜZELTME: Strict RAG modu - sadece bağlamdan yanıt ver, uydurma yapma
 SYSTEM_MSG = (
-    "Aşağıdaki bağlam parçalarını kullanarak yanıt ver. "
-    "Bağlamda verilen TÜM ilgili bilgileri, tarihleri, isimleri ve detayları MUTLAKA dahil et. "
-    "Kaynaklarda yoksa 'Bilmiyorum' de. "
+    "SADECE aşağıdaki bağlam parçalarını kullanarak yanıt ver. "
+    "Bağlamda olmayan hiçbir bilgi ekleme, uydurma veya genel bilgini kullanma. "
+    "Eğer bağlamda yeterli bilgi yoksa: 'Bu konu tezde bulunamadı.' de. "
+    "Bağlamdaki TÜM isimleri, tarihleri ve detayları MUTLAKA dahil et. "
     "Yanıtı tam cümlelerle bitir; maddeleri yarım bırakma."
 )
 
@@ -271,12 +272,23 @@ SYSTEM_MSG = (
 def retrieve(query: str, k: int):
     """
     Sorgu embedding'i ile Chroma'dan en ilgili k belge parçasını getirir.
+    DÜZELTME: Relevance score filtresi eklendi - sadece 0.5+ skorlu belgeleri kabul et
+    Bu sayede alakasız sayfalar kaynak olarak gösterilmez.
     """
     try:
         results = vectorstore.similarity_search_with_relevance_scores(query, k=k)
-        docs = [doc for doc, _score in results]
+        # DÜZELTME: 0.5'in altındaki skorları filtrele (düşük ilgili belgeleri at)
+        filtered = [(doc, score) for doc, score in results if score >= 0.5]
+        print(f"🔍 Toplam {len(results)} belge, {len(filtered)} yüksek skorlu belge seçildi")
+        for doc, score in filtered[:3]:  # İlk 3'ü logla
+            meta = doc.metadata or {}
+            page = page_label(meta)
+            print(f"   📄 Sayfa {page}, skor: {score:.3f}")
+        docs = [doc for doc, _score in filtered]
         return docs
-    except Exception:
+    except Exception as e:
+        print(f"❌ Relevance score hatası: {e}")
+        # Fallback: score olmadan normal arama
         docs = vectorstore.similarity_search(query, k=k)
         return docs
 
@@ -365,6 +377,8 @@ def answer_fn(message: str, history: List[Tuple[str, str]], length_choice: str) 
     ChatInterface tarafından çağrılır.
     DEBUG: Metadata formatı farklı olduğu için page_start kullanılıyor.
     DÜZELTME: polish_style() kaldırıldı, kaynak bloğu artık korunuyor
+    DÜZELTME: Relevance score kontrolü eklendi - alakasız belgeler filtreleniyor
+    DÜZELTME: Boş sonuç kontrolü eklendi - bağlamda bilgi yoksa uyarı ver
     """
     try:
         # Basit selamlama ve tez dışı sorular için kontrol
@@ -374,10 +388,11 @@ def answer_fn(message: str, history: List[Tuple[str, str]], length_choice: str) 
         
         # DEBUG: Retrieve sonuçlarını kontrol et
         docs = retrieve(message, k=CURRENT_TOP_K)
-        print(f"🔍 DEBUG: {len(docs)} belge bulundu")
+        print(f"🔍 DEBUG: {len(docs)} yüksek skorlu belge bulundu")
         
+        # DÜZELTME: Eğer hiç yüksek skorlu belge yoksa, tezde bilgi yok demektir
         if not docs:
-            return "Bu konu tezde bulunamadı."
+            return "Bu konu tezde bulunamadı veya sorunuzla yeterince ilgili değil."
 
         # DEBUG: Metadata'ları kontrol et
         for i, doc in enumerate(docs[:3]):  # İlk 3 belgeyi kontrol et
@@ -387,6 +402,10 @@ def answer_fn(message: str, history: List[Tuple[str, str]], length_choice: str) 
         prompt = build_prompt(message, docs, length_choice)
         max_tokens = RESPONSE_LENGTH_TO_TOKENS.get(length_choice, RESPONSE_LENGTH_TO_TOKENS["Orta"])
         answer = generate_with_gemini(prompt, max_tokens=max_tokens)
+
+        # DÜZELTME: Eğer Gemini "bilmiyorum" veya "bulunamadı" derse, kaynak gösterme
+        if not answer or any(x in answer.lower() for x in ["bilmiyorum", "bulunamadı", "bilgi yok"]):
+            return "Bu konu tezde bulunamadı."
 
         # DEBUG: Kaynak oluşturma
         pages_by_source = {}
@@ -421,12 +440,16 @@ def answer_fn(message: str, history: List[Tuple[str, str]], length_choice: str) 
             sources_block = "Kaynak: " + items[0][2:] if len(items) == 1 else "Kaynaklar:\n" + "\n".join(items)
             print(f"📝 Kaynak bloğu: {sources_block}")
         else:
-            sources_block = "Kaynak: Bilinmiyor"
+            # DÜZELTME: Eğer hiç kaynak yoksa, kaynak bloğu ekleme
+            sources_block = ""
             print("❌ Hiç kaynak sayfası bulunamadı!")
 
         # DÜZELTME: polish_style() KALDIRILDI - kaynak bloğu artık korunuyor
         # Yanıt + kaynak bloğunu doğrudan birleştir
-        final_answer = (answer or "Yanıt üretilemedi.").rstrip() + "\n\n" + sources_block
+        if sources_block:
+            final_answer = (answer or "Yanıt üretilemedi.").rstrip() + "\n\n" + sources_block
+        else:
+            final_answer = (answer or "Yanıt üretilemedi.").rstrip()
         
         return final_answer
 
