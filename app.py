@@ -65,7 +65,8 @@ ALLOW_OPEN_DOMAIN_FALLBACK = os.getenv("ALLOW_OPEN_DOMAIN_FALLBACK", "false").lo
 # Sayfa filtreleme: PDF sayfa 13-104 arası tez içeriği (1-12: ön sayfalar, 105+: kaynakça/ekler)
 PDF_PAGE_START = int(os.getenv("PDF_PAGE_START", "13"))   # DÜN ÇALIŞAN DEĞER
 PDF_PAGE_END = int(os.getenv("PDF_PAGE_END", "104"))     # DÜN ÇALIŞAN DEĞER
-PDF_TO_THESIS_OFFSET = int(os.getenv("PDF_TO_THESIS_OFFSET", "-12"))  # DÜN ÇALIŞAN DEĞER
+# DÜZELTME: Offset değeri -12'den 0'a değiştirildi (negatif sayfa numaraları önlemek için)
+PDF_TO_THESIS_OFFSET = int(os.getenv("PDF_TO_THESIS_OFFSET", "0"))  # DÜZELTME: -12 → 0
 
 # Gemini istemcisi; API anahtarı zorunludur.
 genai.configure(api_key=GOOGLE_API_KEY)
@@ -149,7 +150,8 @@ def is_valid_page(page_num: int) -> bool:
 def pdf_to_thesis_page(pdf_page: int) -> int:
     """
     PDF sayfa numarasını tez sayfa numarasına çevirir.
-    Örnek: PDF sayfa 13 → Tez sayfa 1 (offset -12 ile)
+    DÜZELTME: Offset değeri 0 olarak ayarlandı (negatif sayfa numaraları önlemek için)
+    Örnek: PDF sayfa 1 → Tez sayfa 1 (offset 0 ile)
     """
     return pdf_page + PDF_TO_THESIS_OFFSET
 
@@ -595,8 +597,8 @@ with gr.Blocks(title="Yapay Zekâ Dil Modelleri • Kaynaklı Soru‑Cevap", the
         # Sol panel: Tez indirme + estetik içindekiler + yanıt uzunluğu seçimi
         with gr.Column(scale=1, min_width=400):
             gr.Markdown("### 📄 Tez Dokümanı")
-            # DÜZELTME: Doğru dosya adı (metadata'da görülen)
-            gr.DownloadButton(label="📄 Tezi İndir (PDF)", value="data/yapayzekadilmodelleri.pdf")
+            # DÜZELTME: Doğru dosya adı (gerçek dosya adı)
+            gr.DownloadButton(label="📄 Tezi İndir (PDF)", value="data/tez.pdf")
 
             gr.Markdown("### 📚 İçindekiler")
             gr.HTML(
