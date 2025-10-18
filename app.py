@@ -63,10 +63,10 @@ CHROMA_PERSIST_DIR = os.getenv("CHROMA_PERSIST_DIR", ".chroma")
 ALLOW_OPEN_DOMAIN_FALLBACK = os.getenv("ALLOW_OPEN_DOMAIN_FALLBACK", "false").lower() == "true"
 
 # Sayfa filtreleme: PDF sayfa 13-104 arası tez içeriği (1-12: ön sayfalar, 105+: kaynakça/ekler)
-PDF_PAGE_START = int(os.getenv("PDF_PAGE_START", "13"))
-PDF_PAGE_END = int(os.getenv("PDF_PAGE_END", "104"))
+PDF_PAGE_START = int(os.getenv("PDF_PAGE_START", "13"))   # DÜN ÇALIŞAN DEĞER
+PDF_PAGE_END = int(os.getenv("PDF_PAGE_END", "104"))     # DÜN ÇALIŞAN DEĞER
 # DÜZELTME: Offset değeri -12'den 0'a değiştirildi (negatif sayfa numaraları önlemek için)
-PDF_TO_THESIS_OFFSET = int(os.getenv("PDF_TO_THESIS_OFFSET", "0"))
+PDF_TO_THESIS_OFFSET = int(os.getenv("PDF_TO_THESIS_OFFSET", "0"))  # DÜZELTME: -12 → 0
 
 # Gemini istemcisi; API anahtarı zorunludur.
 genai.configure(api_key=GOOGLE_API_KEY)
@@ -137,9 +137,9 @@ def split_into_chunks(text: str, size: int = 800, overlap: int = 120) -> List[st
 
 def is_valid_page(page_num: int) -> bool:
     """
-    Sayfa filtreleme: PDF sayfa 13-104 arası tez içeriği
-    (1-12: ön sayfalar, 105+: kaynakça/ekler)
-    DÜZELTME: Filtreleme aktif (Kaggle'da tüm PDF işlendiği için burada filtre gerekli)
+    Sayfa filtreleme: Sadece içerik sayfalarını kabul et
+    PDF sayfa 13-104 arası (Giriş - Kaynakça öncesi)
+    DÜZELTME: Filtreleme sistemi açıldı (sadece içerik sayfaları yüklemek için)
     """
     return PDF_PAGE_START <= page_num <= PDF_PAGE_END
 
@@ -178,7 +178,7 @@ def ingest_jsonl(file_obj) -> str:
     """
     JSONL dosyasını satır satır okuyup metin + metadata çıkarır ve Chroma'ya ekler.
     DEBUG: Metadata formatı kontrol edilir ve loglanır.
-    DÜZELTME: Sayfa filtreleme aktif (page_start field'ı kullanılıyor)
+    DÜZELTME: Sayfa filtreleme sistemi açıldı (sadece içerik sayfaları yüklemek için)
     """
     try:
         lines = file_obj.read().decode("utf-8").splitlines()
@@ -196,10 +196,10 @@ def ingest_jsonl(file_obj) -> str:
             if len(texts) < 3:
                 print(f"🔍 Metadata {len(texts)+1}: {meta}")
             
-            # DÜZELTME: Sayfa filtreleme AÇIK - page_start field'ını kullan
+            # DÜZELTME: Sayfa filtreleme sistemi açıldı (page_start kullanılıyor)
             page_num = meta.get("page_start")
             if page_num and not is_valid_page(int(page_num)):
-                continue
+                continue  # Sayfa 1-12 ve 105+ atla
                 
             texts.append(content)
             metas.append(meta)
@@ -218,7 +218,7 @@ def ingest_parquet(file_obj) -> str:
     """
     Parquet dosyasını okuyup "content" ve (varsa) "meta" bilgilerini alır ve Chroma'ya ekler.
     DEBUG: Metadata formatı kontrol edilir ve loglanır.
-    DÜZELTME: Sayfa filtreleme aktif (page_start field'ı kullanılıyor)
+    DÜZELTME: Sayfa filtreleme sistemi açıldı (sadece içerik sayfaları yüklemek için)
     """
     try:
         df = pd.read_parquet(file_obj)
@@ -238,10 +238,10 @@ def ingest_parquet(file_obj) -> str:
                     if pd.notna(val) and val != "":
                         meta.setdefault(key, val)
             
-            # DÜZELTME: Sayfa filtreleme AÇIK - page_start field'ını kullan
+            # DÜZELTME: Sayfa filtreleme sistemi açıldı (page_start kullanılıyor)
             page_num = meta.get("page_start")
             if page_num and not is_valid_page(int(page_num)):
-                continue
+                continue  # Sayfa 1-12 ve 105+ atla
                 
             texts.append(content)
             metas.append(meta)
@@ -438,7 +438,9 @@ def answer_fn(message: str, history: List[Tuple[str, str]], length_choice: str) 
 
 
 # --------------------------------------------------------------------------------------------------
-# DEBUG FONKSIYONU - Metadata formatını kontrol eder
+# 5) Otomatik ingest (deploy esnasında hiçbir kullanıcı aksiyonu gerektirmeden veri yükler)
+#    - data/processed_docs.jsonl
+#    - data/processed_docs.parquet
 # --------------------------------------------------------------------------------------------------
 def debug_metadata():
     """Startup'ta metadata formatını kontrol et"""
@@ -447,88 +449,65 @@ def debug_metadata():
     print("="*80)
     
     # JSONL kontrolü
-    print("\n📄 JSONL ANALİZİ:")
     try:
         with open("data/processed_docs.jsonl", "r", encoding="utf-8") as f:
             lines = f.readlines()[:3]  # İlk 3 satır
+            print(f"\n📄 JSONL ANALİZİ:")
             print(f"   Toplam satır: {len(lines)}")
+            
             for i, line in enumerate(lines, 1):
                 record = json.loads(line)
                 meta = record.get("meta", {})
-                content_preview = record.get("content", "")[:80]
+                content = record.get("content", "")[:50] + "..."
                 print(f"\n   Kayıt {i}:")
-                print(f"   İçerik: {content_preview}...")
+                print(f"   İçerik: {content}")
                 print(f"   Metadata keys: {list(meta.keys())}")
                 for k, v in meta.items():
                     print(f"      • {k}: {v} (type: {type(v).__name__})")
     except Exception as e:
-        print(f"   ❌ JSONL hata: {e}")
+        print(f"JSONL hata: {e}")
     
     # Parquet kontrolü
-    print("\n📊 PARQUET ANALİZİ:")
     try:
         df = pd.read_parquet("data/processed_docs.parquet")
+        print(f"\n📊 PARQUET ANALİZİ:")
         print(f"   Sütunlar: {list(df.columns)}")
         print(f"   Toplam satır: {len(df)}")
         
-        if len(df) > 0:
-            row = df.iloc[0]
-            print(f"\n   İlk satır:")
-            
-            # Meta sütunu varsa
-            if "meta" in df.columns:
-                meta_val = row.get("meta")
-                if isinstance(meta_val, dict):
-                    print(f"   meta dict keys: {list(meta_val.keys())}")
-                    for k, v in meta_val.items():
-                        print(f"      • {k}: {v}")
-                else:
-                    print(f"   meta değeri dict değil: {type(meta_val)}")
-            
-            # Doğrudan sütunlar
-            for col in ["page", "page_start", "page_end", "page_label", "source"]:
-                if col in df.columns:
-                    val = row.get(col)
-                    if pd.notna(val):
-                        print(f"   {col}: {val} (type: {type(val).__name__})")
-                        
+        print(f"\n   İlk satır:")
+        row = df.iloc[0]
+        if "meta" in df.columns:
+            print(f"   meta dict: {row['meta']}")
+        for col in ["page", "page_start", "page_end"]:
+            if col in df.columns:
+                print(f"   {col}: {row.get(col)} (type: {type(row.get(col)).__name__})")
     except Exception as e:
-        print(f"   ❌ Parquet hata: {e}")
+        print(f"Parquet hata: {e}")
     
     # PDF kontrolü
-    print("\n📕 PDF KONTROLÜ:")
     try:
-        import os
-        pdf_path = "data/tez.pdf"
-        if os.path.exists(pdf_path):
-            size_mb = os.path.getsize(pdf_path) / (1024 * 1024)
-            print(f"   ✅ PDF mevcut: {pdf_path}")
-            print(f"   Boyut: {size_mb:.2f} MB")
-            if size_mb < 0.1:
-                print(f"   ⚠️  UYARI: Dosya çok küçük!")
+        if os.path.exists("data/tez.pdf"):
+            size = os.path.getsize("data/tez.pdf") / (1024*1024)
+            print(f"\n📕 PDF KONTROLÜ:")
+            print(f"   ✅ PDF mevcut: data/tez.pdf")
+            print(f"   Boyut: {size:.2f} MB")
         else:
-            print(f"   ❌ PDF bulunamadı: {pdf_path}")
+            print(f"\n📕 PDF KONTROLÜ:")
+            print(f"   ❌ PDF bulunamadı: data/tez.pdf")
     except Exception as e:
-        print(f"   ❌ PDF kontrol hatası: {e}")
+        print(f"PDF hata: {e}")
     
-    print("\n" + "="*80)
+    print("="*80)
     print("✅ DEBUG TAMAMLANDI")
     print("="*80 + "\n")
 
 
-# --------------------------------------------------------------------------------------------------
-# 5) Otomatik ingest (deploy esnasında hiçbir kullanıcı aksiyonu gerektirmeden veri yükler)
-#    - data/processed_docs.jsonl
-#    - data/processed_docs.parquet
-# --------------------------------------------------------------------------------------------------
 def auto_ingest_from_repo() -> str:
     """
     Uygulama başlarken veri klasöründeki dosyaları ingest eder.
     DEBUG: Her adım loglanır ve kontrol edilir.
     """
-    # DEBUG: Önce metadata formatını kontrol et
-    debug_metadata()
-    
+    debug_metadata()  # DEBUG: Metadata formatını kontrol et
     logs = []
     print("🚀 Auto ingest başlıyor...")
     
