@@ -135,11 +135,13 @@ def split_into_chunks(text: str, size: int = 800, overlap: int = 120) -> List[st
 
 def is_valid_page(page_num: int) -> bool:
     """
-    Sayfa numarasının geçerli aralıkta olup olmadığını kontrol eder.
-    Sadece tez içeriğinin bulunduğu sayfaları kabul eder.
-    İçindekiler, kaynaklar gibi bölümler filtrelenir.
+    Sayfa filtreleme - GEÇİCİ OLARAK KAPATILDI
     """
-    return PDF_PAGE_START <= page_num <= PDF_PAGE_END
+    # GEÇİCİ: Tüm sayfaları kabul et
+    return True
+    
+    # Orijinal kod (kapalı):
+    # return PDF_PAGE_START <= page_num <= PDF_PAGE_END
 
 
 def pdf_to_thesis_page(pdf_page: int) -> int:
@@ -174,15 +176,12 @@ vectorstore = Chroma(
 def ingest_jsonl(file_obj) -> str:
     """
     JSONL dosyasını satır satır okuyup metin + metadata çıkarır ve Chroma'ya ekler.
-    Beklenen satır yapısı:
-      {"content": "metin parçası...", "meta": {"source":"tez.pdf", "page": 12}}
-    Sayfa filtreleme: Sadece PDF_PAGE_START ile PDF_PAGE_END arasındaki sayfalar işlenir
-    Dönüş:
-      - İşlenen parça sayısını belirten durum mesajı
     """
     try:
         lines = file_obj.read().decode("utf-8").splitlines()
         texts, metas = [], []
+        print(f"📄 {len(lines)} satır okundu")
+        
         for ln in lines:
             row = json.loads(ln)
             content = clean_text(row.get("content", ""))
@@ -190,15 +189,22 @@ def ingest_jsonl(file_obj) -> str:
                 continue
             meta = row.get("meta", {}) or {}
             
-            # Sayfa filtreleme: sadece geçerli sayfaları işle
-            page_num = meta.get("page")
-            if page_num and not is_valid_page(int(page_num)):
-                continue
+            # DEBUG: İlk 3 metadata'yı kontrol et
+            if len(texts) < 3:
+                print(f"🔍 Metadata {len(texts)+1}: {meta}")
+            
+            # Sayfa filtreleme (şimdi kapalı - tüm sayfalar kabul ediliyor)
+            # page_num = meta.get("page")
+            # if page_num and not is_valid_page(int(page_num)):
+            #     continue
                 
             texts.append(content)
             metas.append(meta)
+            
         if not texts:
             return "JSONL boş ya da geçerli kayıt bulunamadı."
+            
+        print(f"📊 {len(texts)} parça eklenecek")
         vectorstore.add_texts(texts=texts, metadatas=metas)
         return f"JSONL ingest tamamlandı: {len(texts)} parça eklendi."
     except Exception as e:
@@ -208,10 +214,6 @@ def ingest_jsonl(file_obj) -> str:
 def ingest_parquet(file_obj) -> str:
     """
     Parquet dosyasını okuyup "content" ve (varsa) "meta" bilgilerini alır ve Chroma'ya ekler.
-    Kurallar:
-      - 'content' sütunu zorunludur (string)
-      - 'meta' sütunu yoksa title/source/page/page_start/page_end sütunlarından metadata derlenir
-      - Sayfa filtreleme: Sadece geçerli sayfa aralığındaki kayıtlar işlenir
     """
     try:
         df = pd.read_parquet(file_obj)
@@ -231,10 +233,10 @@ def ingest_parquet(file_obj) -> str:
                     if pd.notna(val) and val != "":
                         meta.setdefault(key, val)
             
-            # Sayfa filtreleme: sadece geçerli sayfaları işle
-            page_num = meta.get("page")
-            if page_num and not is_valid_page(int(page_num)):
-                continue
+            # Sayfa filtreleme (şimdi kapalı - tüm sayfalar kabul ediliyor)
+            # page_num = meta.get("page")
+            # if page_num and not is_valid_page(int(page_num)):
+            #     continue
                 
             texts.append(content)
             metas.append(meta)
@@ -262,9 +264,6 @@ SYSTEM_MSG = (
 def retrieve(query: str, k: int):
     """
     Sorgu embedding'i ile Chroma'dan en ilgili k belge parçasını getirir.
-    Not:
-      - Bazı sürümlerde 'similarity_search_with_relevance_scores' olmayabilir; bu durumda
-        klasik 'similarity_search' ile geri düşer.
     """
     try:
         results = vectorstore.similarity_search_with_relevance_scores(query, k=k)
@@ -315,7 +314,6 @@ def build_prompt(query: str, docs, length_choice: str) -> str:
 def generate_with_gemini(prompt: str, max_tokens: int | None = None) -> str:
     """
     Gemini'den yanıt üretir ve düz metin olarak döndürür.
-    Hata durumları üst katmanda yakalanır; burada sadece model çağrısı yapılır.
     """
     cfg = dict(GENERATION_CFG)
     if max_tokens is not None:
@@ -344,9 +342,6 @@ def polish_style(raw_answer: str) -> str:
 def answer_fn(message: str, history: List[Tuple[str, str]], length_choice: str) -> str:
     """
     ChatInterface tarafından çağrılır.
-    STRICT RAG:
-      - Bağlam yoksa: "Bu konu tezde bulunamadı." (kaynak yazma)
-      - Bağlam varsa: RAG yanıt + Kaynaklar (tez sayfa numarasına dönüştürülmüş)
     """
     try:
         # Basit selamlama ve tez dışı sorular için kontrol
@@ -354,38 +349,57 @@ def answer_fn(message: str, history: List[Tuple[str, str]], length_choice: str) 
         if message.lower().strip() in simple_greetings:
             return "Merhaba! Yapay Zekâ Dil Modelleri tezi hakkında sorularınızı sorabilirsiniz."
         
+        # DEBUG: Retrieve sonuçlarını kontrol et
         docs = retrieve(message, k=CURRENT_TOP_K)
+        print(f"🔍 DEBUG: {len(docs)} belge bulundu")
         
         if not docs:
             return "Bu konu tezde bulunamadı."
+
+        # DEBUG: Metadata'ları kontrol et
+        for i, doc in enumerate(docs[:3]):  # İlk 3 belgeyi kontrol et
+            meta = doc.metadata or {}
+            print(f"📄 Belge {i+1}: page={meta.get('page')}, source={meta.get('source')}")
 
         prompt = build_prompt(message, docs, length_choice)
         max_tokens = RESPONSE_LENGTH_TO_TOKENS.get(length_choice, RESPONSE_LENGTH_TO_TOKENS["Orta"])
         answer = generate_with_gemini(prompt, max_tokens=max_tokens)
 
-        # Kaynakları sade ve tekilleştirilmiş biçimde göster (DÜN ÇALIŞAN FORMAT)
+        # DEBUG: Kaynak oluşturma
         pages_by_source = {}
         for d in docs:
             m = d.metadata or {}
             display_name = "Yapay Zekâ Dil Modelleri"
             pdf_page = m.get("page", "?")
+            print(f"🔍 PDF sayfa: {pdf_page}")
+            
             try:
                 pdf_page_int = int(pdf_page)
                 thesis_page = pdf_to_thesis_page(pdf_page_int)
                 pages_by_source.setdefault(display_name, set()).add(str(thesis_page))
+                print(f"✅ Tez sayfa: {thesis_page}")
             except (ValueError, TypeError):
                 pages_by_source.setdefault(display_name, set()).add(str(pdf_page))
+                print(f"❌ Sayfa dönüşüm hatası: {pdf_page}")
 
-        def sort_key(p: str):
-            head = str(p).split("-")[0]
-            return int(head) if head.isdigit() else 10**9
+        print(f"📚 Kaynak sayfalar: {pages_by_source}")
 
-        items = []
-        for src, pages in pages_by_source.items():
-            ordered = ", ".join(sorted(pages, key=sort_key))
-            items.append(f"- {src} syf. {ordered}")
-        
-        sources_block = "Kaynak: " + items[0][2:] if len(items) == 1 else "Kaynaklar:\n" + "\n".join(items)
+        # Kaynak bloğu oluştur
+        if pages_by_source:
+            def sort_key(p: str):
+                head = str(p).split("-")[0]
+                return int(head) if head.isdigit() else 10**9
+
+            items = []
+            for src, pages in pages_by_source.items():
+                ordered = ", ".join(sorted(pages, key=sort_key))
+                items.append(f"- {src} syf. {ordered}")
+            
+            sources_block = "Kaynak: " + items[0][2:] if len(items) == 1 else "Kaynaklar:\n" + "\n".join(items)
+            print(f"📝 Kaynak bloğu: {sources_block}")
+        else:
+            sources_block = "Kaynak: Bilinmiyor"
+            print("❌ Hiç kaynak sayfası bulunamadı!")
 
         combined = (answer or "Yanıt üretilemedi.").rstrip() + "\n\n" + sources_block
         final_answer = polish_style(combined) or combined
@@ -393,6 +407,7 @@ def answer_fn(message: str, history: List[Tuple[str, str]], length_choice: str) 
         return final_answer
 
     except Exception as e:
+        print(f"❌ Hata: {e}")
         return f"Hata: {e}"
 
 
@@ -404,34 +419,40 @@ def answer_fn(message: str, history: List[Tuple[str, str]], length_choice: str) 
 def auto_ingest_from_repo() -> str:
     """
     Uygulama başlarken veri klasöründeki dosyaları ingest eder.
-    Not:
-      - Aynı koleksiyona tekrar tekrar ingest etmeyi engellemek için ileride "idempotent"
-        bir kontrol (ör. koleksiyon boş mu?) eklenebilir. MVP'de gerek görülmemiştir.
     """
     logs = []
+    print("🚀 Auto ingest başlıyor...")
+    
     try:
         p = "data/processed_docs.jsonl"
         if os.path.exists(p):
+            print(f"✅ JSONL dosyası bulundu: {p}")
             with open(p, "rb") as f:
                 result = ingest_jsonl(f)
                 logs.append(result)
+                print(f"📊 JSONL sonucu: {result}")
         else:
-            print("❌ JSONL dosyası bulunamadı!")
+            print(f"❌ JSONL dosyası bulunamadı: {p}")
     except Exception as e:
         logs.append(f"AUTO JSONL hata: {e}")
+        print(f"❌ JSONL hatası: {e}")
 
     try:
         p = "data/processed_docs.parquet"
         if os.path.exists(p):
+            print(f"✅ Parquet dosyası bulundu: {p}")
             with open(p, "rb") as f:
                 result = ingest_parquet(f)
                 logs.append(result)
+                print(f"📊 Parquet sonucu: {result}")
         else:
-            print("❌ Parquet dosyası bulunamadı!")
+            print(f"❌ Parquet dosyası bulunamadı: {p}")
     except Exception as e:
         logs.append(f"AUTO Parquet hata: {e}")
+        print(f"❌ Parquet hatası: {e}")
 
     final_result = "\n".join([lg for lg in logs if lg])
+    print(f"🎯 Final ingest sonucu: {final_result}")
     return final_result
 
 
@@ -447,12 +468,12 @@ EXAMPLES = [
     "Kendine dikkat (self-attention) nasıl çalışır?",
     "RNN/LSTM/GRU'nun karşılaştığı temel sorunlar nelerdir?",
     "GPT ve BERT hangi görevlerde daha başarılıdır?",
-    "Temel NLP teknikleri nelerdir?",
+    "Temel doğal dil işleme teknikleri nelerdir?",
     "Yapay zekâ nasıl tanımlanır? Kapsadığı alt alanlar nelerdir?",
     "Çok modlu modellerin öne çıkan örnekleri hangileri?",
     "Etik bölümünde hangi riskler tartışılıyor?",
     "Gelecek çalışmalar için öneriler nelerdir?",
-    "Tezi bana anlatır mısın?",  # YENİ EKLENEN SORU
+    "Tezi bana anlatır mısın?",
 ]
 
 # Tema: açık, yüksek okunabilirlik ve sade anahtarlar (Gradio ile uyumlu)
@@ -574,43 +595,36 @@ with gr.Blocks(title="Yapay Zekâ Dil Modelleri • Kaynaklı Soru‑Cevap", the
                   <div class="toc-card">
                     <div class="toc-header">
                       <span>1. GİRİŞ</span>
-                      <span class="toc-page">syf. 1</span>
                     </div>
                   </div>
                   <div class="toc-card">
                     <div class="toc-header">
                       <span>2. YAPAY ZEKÂ VE DOĞAL DİL İŞLEME</span>
-                      <span class="toc-page">syf. 2</span>
                     </div>
                   </div>
                   <div class="toc-card">
                     <div class="toc-header">
                       <span>3. DİL MODELLEMEDE ML ve DL</span>
-                      <span class="toc-page">syf. 15</span>
                     </div>
                   </div>
                   <div class="toc-card">
                     <div class="toc-header">
                       <span>4. DİL MODELLERİ</span>
-                      <span class="toc-page">syf. 31</span>
                     </div>
                   </div>
                   <div class="toc-card">
                     <div class="toc-header">
                       <span>5. TRANSFORMER TABANLI MODELLER</span>
-                      <span class="toc-page">syf. 41</span>
                     </div>
                   </div>
                   <div class="toc-card">
                     <div class="toc-header">
                       <span>6. GÜNCEL YÖNELİMLER ve ETİK</span>
-                      <span class="toc-page">syf. 71</span>
                     </div>
                   </div>
                   <div class="toc-card">
                     <div class="toc-header">
                       <span>7. SONUÇ ve DEĞERLENDİRME</span>
-                      <span class="toc-page">syf. 92</span>
                     </div>
                   </div>
                 </div>
