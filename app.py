@@ -244,10 +244,17 @@ def ingest_parquet(file_obj) -> str:
 #    - generate_with_gemini: Yanıt üretir; metin döndürür.
 # --------------------------------------------------------------------------------------------------
 SYSTEM_MSG = (
-    "Aşağıdaki bağlam parçalarını kullanarak yanıt ver. "
-    "Bağlamda verilen TÜM ilgili bilgileri, tarihleri, isimleri ve detayları MUTLAKA dahil et. "
-    "Eğer bağlamda yeterli bilgi yoksa: 'Bu konu tezde yeterli detayla bulunamadı.' de. "
-    "Yanıtı tam cümlelerle bitir; maddeleri yarım bırakma."
+    "ROL: Tez tabanlı RAG asistanısın. Yalnızca verilen bağlamdan cevap ver.\n\n"
+    "KURALLAR:\n"
+    "1) Bağlam dışı bilgi ekleme; tahmin yürütme yapma.\n"
+    "2) Bağlam yetersizse şu cümleyi KESİNLİKLE kullan: \"Bu konu tezde yeterli detayla bulunamadı.\"\n"
+    "3) Yanıt dili: Kullanıcı hangi dilde soru sorduysa o dilde, resmi ve açık yaz.\n"
+    "4) Kısa/Orta/Uzun seçimine saygı göster; gereksiz tekrar ve dolgu yapma.\n"
+    "5) Tanım/tarih/isim gibi hassas kısımlarda bağlamdaki ifadeyi bozma, yeniden yazma.\n"
+    "6) Liste gerekiyorsa madde işaretleriyle ve her madde tek fikir içerecek şekilde yaz.\n"
+    "7) Kaynak kısmını sen yazmayacaksın; uygulama ekleyecek. Metin içine [s. X] gibi atıf koyma.\n"
+    "8) Bir kavram birden çok pasajda geçiyorsa çelişki doğuracak ifadelerden kaçın; en doğrudan tanımı öne al.\n\n"
+    "BAĞLAM: Aşağıda numaralı pasajlar var; yalnızca bunları kullan."
 )
 
 
@@ -319,13 +326,16 @@ def build_prompt(query: str, docs, length_choice: str) -> str:
     return f"{SYSTEM_MSG}\n\n{length_instruction}\n\nBağlam:\n{context}\n\nSoru: {query}\nYanıt:"
 
 
-def generate_with_gemini(prompt: str, max_tokens: int | None = None) -> str:
+def generate_with_gemini(prompt: str, max_tokens: int | None = None, temperature: float | None = None) -> str:
     """
     Gemini'den yanıt üretir ve düz metin olarak döndürür.
+    YENİ: temperature isteğe göre override edilebilir.
     """
     cfg = dict(GENERATION_CFG)
     if max_tokens is not None:
         cfg["max_output_tokens"] = int(max_tokens)
+    if temperature is not None:
+        cfg["temperature"] = float(temperature)
     model = genai.GenerativeModel(GENERATION_MODEL, generation_config=cfg)
     resp = model.generate_content(prompt)
     return (resp.text or "").strip()
@@ -338,6 +348,7 @@ def answer_fn(message: str, history: List[Tuple[str, str]], length_choice: str) 
     GÜNCELLEME:
     - "Tezde bulunamadı" veya "Yanıt üretilemedi" durumlarında kaynak/uyarı GÖSTERİLMEZ.
     - Uyarı yalnızca kaynak bloğu varsa eklenir.
+    - Yanıt uzunluğuna göre temperature ayarlanır (Kısa=0.2, Orta/Uzun=0.25).
     """
     try:
         simple_greetings = ["merhaba", "selam", "hello", "hi", "nasılsın", "iyi misin"]
@@ -350,7 +361,8 @@ def answer_fn(message: str, history: List[Tuple[str, str]], length_choice: str) 
 
         prompt = build_prompt(message, docs, length_choice)
         max_tokens = RESPONSE_LENGTH_TO_TOKENS.get(length_choice, RESPONSE_LENGTH_TO_TOKENS["Orta"])
-        answer = generate_with_gemini(prompt, max_tokens=max_tokens)
+        temp = 0.2 if length_choice == "Kısa" else 0.25
+        answer = generate_with_gemini(prompt, max_tokens=max_tokens, temperature=temp)
 
         if not answer:
             return "Yanıt üretilemedi."
@@ -504,7 +516,7 @@ button.primary:hover {
 .toc-card:hover {
   border-color: #3b82f6;
   box-shadow: 0 4px 12px rgba(59, 130, 246, 0.15);
-  transform: translateY(-1px);
+  transform: translateY(-1px).
 }
 .toc-header {
   display: flex;
