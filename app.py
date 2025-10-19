@@ -133,6 +133,38 @@ def split_into_chunks(text: str, size: int = 800, overlap: int = 120) -> List[st
     return chunks
 
 
+# YENİ: Basit tokenizasyon ve sorgudan anahtar çıkarımı (genel; sayfaya/konuya özgü değil)
+def tokenize_for_keywords(text: str) -> list[str]:
+    """
+    YENİ:
+    - Küçük harfe indir, TR karakterleri basit normalize et
+    - Harf/rakam dışını boşlukla değiştir
+    - 1 karakterlik parçaları ele
+    """
+    txt = (text or "").lower()
+    tr_map = str.maketrans("çğıöşüâîû", "cgiosuaiu")
+    txt = txt.translate(tr_map)
+    txt = re.sub(r"[^a-z0-9ğüşıöç ]", " ", txt)
+    tokens = [t for t in txt.split() if len(t) > 1]
+    return tokens
+
+
+# GÜNCELLEME: Sadece sorgudan türeyen anahtarlar (stop-words hariç). Sayfaya/konuya özgü değil.
+def build_query_keywords(query: str) -> set[str]:
+    tokens = tokenize_for_keywords(query)
+    stop = {
+        "ve","ile","mi","nedir","nelerdir","hangi","temel","alan","olarak","da","de","bir","icin",
+        "nasil","ne","kim","neydi","neye","hakkinda","uzerine","ileti","olan","midir","midirki"
+    }
+    return {t for t in tokens if t not in stop and len(t) > 2}
+
+
+# YENİ: Sorgudan basit ikili ifadeler (bigram) üret (genel eşleşmeyi güçlendirir)
+def build_query_bigrams(query: str) -> set[str]:
+    toks = [t for t in tokenize_for_keywords(query) if len(t) > 2]
+    return {" ".join([toks[i], toks[i + 1]]) for i in range(len(toks) - 1)}
+
+
 def is_valid_page(page_num: int) -> bool:
     """
     Sayfa filtreleme: PDF sayfa 13-104 arası tez içeriği
@@ -254,14 +286,38 @@ SYSTEM_MSG = (
 def retrieve(query: str, k: int):
     """
     Sorgu embedding'i ile Chroma'dan en ilgili k belge parçasını getirir.
+    GÜNCELLEME: Skorsuz, güvenli arama kullanılır; üstüne genel leksikal re‑rank uygulanır.
     """
     try:
-        results = vectorstore.similarity_search_with_relevance_scores(query, k=k)
-        docs = [doc for doc, _score in results]
-        return docs
+        # Daha zengin havuz için 2x sonuç çek (min 8)
+        pool_docs = vectorstore.similarity_search(query, k=max(k * 2, 8))
     except Exception:
-        docs = vectorstore.similarity_search(query, k=k)
-        return docs
+        pool_docs = []
+
+    if not pool_docs:
+        return []
+
+    # YENİ: Genel leksikal re‑rank (sadece sorgudan türeyen anahtarlar)
+    query_keywords = build_query_keywords(query)
+    query_bigrams  = build_query_bigrams(query)
+
+    def lexical_hits(text: str) -> int:
+        t = (text or "").lower()
+        toks = tokenize_for_keywords(t)
+        word_hits   = sum(1 for tok in toks if tok in query_keywords)
+        phrase_hits = sum(1 for bg in query_bigrams if bg in t)
+        return word_hits + 2 * phrase_hits
+
+    scored = [(lexical_hits(doc.page_content), idx, doc) for idx, doc in enumerate(pool_docs)]
+    max_hit = max((h for h, _, _ in scored), default=0)
+
+    # Eğer eşleşme yoksa, Chroma'nın kendi sıralamasını koru
+    if max_hit == 0:
+        return pool_docs[:k]
+
+    # Aksi halde, leksikal skora göre sırala (eşitlikte orijinal sırayı koru)
+    scored.sort(key=lambda x: (x[0], -x[1]), reverse=True)
+    return [doc for _h, _i, doc in scored[:k]]
 
 
 def page_label(meta: dict) -> str:
@@ -335,7 +391,9 @@ def answer_fn(message: str, history: List[Tuple[str, str]], length_choice: str) 
     """
     ChatInterface tarafından çağrılır.
     RAG pipeline: retrieve → build_prompt → generate → format_response
-    YENİ: Uyarı notu artık HER DURUMDA görünür (kaynak bloğu olsun/olmasın).
+    GÜNCELLEME:
+    - "Tezde bulunamadı" veya "Yanıt üretilemedi" durumlarında kaynak/uyarı GÖSTERİLMEZ.
+    - Uyarı yalnızca kaynak bloğu varsa eklenir.
     """
     try:
         simple_greetings = ["merhaba", "selam", "hello", "hi", "nasılsın", "iyi misin"]
@@ -343,26 +401,19 @@ def answer_fn(message: str, history: List[Tuple[str, str]], length_choice: str) 
             return "Merhaba! Yapay Zekâ Dil Modelleri tezi hakkında sorularınızı sorabilirsiniz."
         
         docs = retrieve(message, k=CURRENT_TOP_K)
-        
         if not docs:
-            # Kaynak bulunamadığında da uyarı göstermek için final metne ekleyeceğiz
-            base_msg = "Bu konu tezde bulunamadı veya sorunuzla yeterince ilgili değil."
-            warning_note = "\n\nℹ️ Bu yanıt birden fazla sayfadan derlenmiştir. Tam bilgi için kaynak sayfalara göz atın."
-            return base_msg + warning_note
+            return "Bu konu tezde bulunamadı veya sorunuzla yeterince ilgili değil."
 
         prompt = build_prompt(message, docs, length_choice)
         max_tokens = RESPONSE_LENGTH_TO_TOKENS.get(length_choice, RESPONSE_LENGTH_TO_TOKENS["Orta"])
         answer = generate_with_gemini(prompt, max_tokens=max_tokens)
 
         if not answer:
-            # Üretilemeyen yanıtlarda da uyarı göster
-            warning_note = "\n\nℹ️ Bu yanıt birden fazla sayfadan derlenmiştir. Tam bilgi için kaynak sayfalara göz atın."
-            return "Yanıt üretilemedi." + warning_note
+            return "Yanıt üretilemedi."
         
-        if "bulunamadı" in answer.lower() or "yeterli detay" in answer.lower():
-            # Model “bulunamadı” dediyse de uyarı ekle
-            warning_note = "\n\nℹ️ Bu yanıt birden fazla sayfadan derlenmiştir. Tam bilgi için kaynak sayfalara göz atın."
-            return answer + warning_note
+        low_answer = answer.lower()
+        if ("bulunamadı" in low_answer) or ("yeterli detay" in low_answer):
+            return answer
 
         # Kaynak sayfaları toplama
         pages_by_source = {}
@@ -385,20 +436,14 @@ def answer_fn(message: str, history: List[Tuple[str, str]], length_choice: str) 
                 items.append(f"- {src} s. {ordered}")
             
             sources_block = "Kaynak: " + items[0][2:] if len(items) == 1 else "Kaynaklar:\n" + "\n".join(items)
-        else:
-            sources_block = ""
 
-        # UYARI: Her durumda (tek sayfa/çok sayfa/hiç kaynak) göster
-        warning_note = "\n\nℹ️ Bu yanıt birden fazla sayfadan derlenmiştir. Tam bilgi için kaynak sayfalara göz atın."
-
-        if sources_block:
-            # Kaynak bloğunun hemen altına uyarıyı ekle
+            # Uyarı yalnızca kaynak bloğu varsa eklenir
+            warning_note = "\n\nℹ️ Bu yanıt birden fazla sayfadan derlenmiştir. Tam bilgi için kaynak sayfalara göz atın."
             final_answer = (answer or "Yanıt üretilemedi.").rstrip() + "\n\n" + sources_block + warning_note
-        else:
-            # Kaynak yoksa bile uyarı cevabın altına eklenecek
-            final_answer = (answer or "Yanıt üretilemedi.").rstrip() + warning_note
-        
-        return final_answer
+            return final_answer
+
+        # Kaynak yoksa sadece yanıtı döndür
+        return (answer or "Yanıt üretilemedi.").rstrip()
 
     except Exception as e:
         return f"Hata: {e}"
@@ -441,7 +486,7 @@ def auto_ingest_from_repo() -> str:
 #    - Bu sürümde dosya yükleme kapalıdır; veri açılışta otomatik yüklenir.
 #    - Sol panel: Tez indirme + estetik içindekiler + yanıt uzunluğu seçimi
 #    - Sağ panel: Sohbet arayüzü
-#    YENİ: Ana başlığa yazar ve danışman bilgisi eklendi
+#    YENİ: Başlıkta Yazar/Danışman/Kapsam bilgisi kalıcı gösterilir
 # --------------------------------------------------------------------------------------------------
 EXAMPLES = [
     "Tezin temel problem tanımı nedir?",
@@ -551,7 +596,7 @@ def chat_step(user_message: str, history: list[tuple[str, str]], length_choice: 
 
 
 with gr.Blocks(title="Yapay Zekâ Dil Modelleri • Kaynaklı Soru‑Cevap", theme=theme, css=css, fill_height=True) as demo:
-    # YENİ: Ana başlık + Yazar/Danışman/Kapsam bilgisi eklendi
+    # YENİ: Ana başlık + Yazar/Danışman/Kapsam bilgisi KALICI
     gr.Markdown(
         """
         <div style="padding:10px 0 4px 0;">
@@ -560,8 +605,8 @@ with gr.Blocks(title="Yapay Zekâ Dil Modelleri • Kaynaklı Soru‑Cevap", the
             Bu arayüz, 'Yapay Zekâ Dil Modelleri' tezi temel alınarak sorularınıza yanıt verir; ilgili pasajları bulur ve kaynak sayfalarıyla birlikte sunar.
           </div>
           <div style="color:#64748b;font-size:0.9em;margin-top:8px;">
-            📝 <strong>Yazar:</strong> Yağmur ÇORUM | 
-            👨‍🏫 <strong>Danışman:</strong> Prof. Dr. Burak ORDİN | 
+            📝 <strong>Yazar:</strong> Yağmur ÇORUM |
+            👨‍🏫 <strong>Danışman:</strong> Prof. Dr. Burak ORDİN |
             📚 <strong>Kapsam:</strong> Bölüm 1-7 (Ana İçerik)
           </div>
         </div>
@@ -577,41 +622,13 @@ with gr.Blocks(title="Yapay Zekâ Dil Modelleri • Kaynaklı Soru‑Cevap", the
             gr.HTML(
                 """
                 <div class="toc-container">
-                  <div class="toc-card">
-                    <div class="toc-header">
-                      <span>1. GİRİŞ</span>
-                    </div>
-                  </div>
-                  <div class="toc-card">
-                    <div class="toc-header">
-                      <span>2. YAPAY ZEKÂ VE DOĞAL DİL İŞLEME</span>
-                    </div>
-                  </div>
-                  <div class="toc-card">
-                    <div class="toc-header">
-                      <span>3. DİL MODELLEMEDE ML ve DL</span>
-                    </div>
-                  </div>
-                  <div class="toc-card">
-                    <div class="toc-header">
-                      <span>4. DİL MODELLERİ</span>
-                    </div>
-                  </div>
-                  <div class="toc-card">
-                    <div class="toc-header">
-                      <span>5. TRANSFORMER TABANLI MODELLER</span>
-                    </div>
-                  </div>
-                  <div class="toc-card">
-                    <div class="toc-header">
-                      <span>6. GÜNCEL YÖNELİMLER ve ETİK</span>
-                    </div>
-                  </div>
-                  <div class="toc-card">
-                    <div class="toc-header">
-                      <span>7. SONUÇ ve DEĞERLENDİRME</span>
-                    </div>
-                  </div>
+                  <div class="toc-card"><div class="toc-header"><span>1. GİRİŞ</span></div></div>
+                  <div class="toc-card"><div class="toc-header"><span>2. YAPAY ZEKÂ VE DOĞAL DİL İŞLEME</span></div></div>
+                  <div class="toc-card"><div class="toc-header"><span>3. DİL MODELLEMEDE ML ve DL</span></div></div>
+                  <div class="toc-card"><div class="toc-header"><span>4. DİL MODELLERİ</span></div></div>
+                  <div class="toc-card"><div class="toc-header"><span>5. TRANSFORMER TABANLI MODELLER</span></div></div>
+                  <div class="toc-card"><div class="toc-header"><span>6. GÜNCEL YÖNELİMLER ve ETİK</span></div></div>
+                  <div class="toc-card"><div class="toc-header"><span>7. SONUÇ ve DEĞERLENDİRME</span></div></div>
                 </div>
                 """
             )
@@ -623,7 +640,8 @@ with gr.Blocks(title="Yapay Zekâ Dil Modelleri • Kaynaklı Soru‑Cevap", the
             )
 
         with gr.Column(scale=2):
-            chatbot = gr.Chatbot(height=500, avatar_images=(None, None))
+            # GÜNCELLEME: Gradio uyarısını susturmak için type="messages"
+            chatbot = gr.Chatbot(height=500, avatar_images=(None, None), type="messages")
             input_box = gr.Textbox(placeholder="Sorunuzu yazın ve Enter'a basın...", scale=1)
             send_btn = gr.Button("Gönder", variant="primary")
 
