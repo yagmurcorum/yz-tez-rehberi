@@ -65,6 +65,7 @@ ALLOW_OPEN_DOMAIN_FALLBACK = os.getenv("ALLOW_OPEN_DOMAIN_FALLBACK", "false").lo
 # Sayfa filtreleme: PDF sayfa 13-104 arası tez içeriği (1-12: ön sayfalar, 105+: kaynakça/ekler)
 PDF_PAGE_START = int(os.getenv("PDF_PAGE_START", "13"))
 PDF_PAGE_END = int(os.getenv("PDF_PAGE_END", "104"))
+# DÜZELTME: Offset değeri -12'den 0'a değiştirildi (negatif sayfa numaraları önlemek için)
 PDF_TO_THESIS_OFFSET = int(os.getenv("PDF_TO_THESIS_OFFSET", "0"))
 
 # Gemini istemcisi; API anahtarı zorunludur.
@@ -74,21 +75,22 @@ genai.configure(api_key=GOOGLE_API_KEY)
 # - temperature: RAG'de düşük tutulur (0.0–0.3 aralığı), kaynağa sadakat artar.
 # - top_p/top_k: Örnekleme çeşitliliği; varsayılanlar korunur, gerekirse ayarlanır.
 # - max_output_tokens: Cevabın üst uzunluğu; kesilme yaşanırsa artırılabilir (ör. 768/1024).
+# DÜZELTME: Token limiti 512'den 1024'e artırıldı (cümlelerin yarım kalmasını önlemek için)
 GENERATION_CFG = dict(
     temperature=0.25,
     top_p=0.95,
     top_k=40,
-    max_output_tokens=1024
+    max_output_tokens=1024  # DÜZELTME: 512 → 1024
 )
 
-# Yanıt uzunluğu ön ayarları (STRICT RAG)
+# Yanıt uzunluğu ön ayarları (STRICT RAG) - GERÇEKTEN FARK EDECEK DEĞERLER
 RESPONSE_LENGTH_TO_TOKENS = {
-    "Kısa": 400,
-    "Orta": 800,
-    "Uzun": 1500
+    "Kısa": 400,    # Çok kısa, özet yanıt
+    "Orta": 800,    # Orta uzunluk, detaylı yanıt
+    "Uzun": 1500    # Çok uzun, kapsamlı yanıt
 }
 DEFAULT_RESPONSE_LENGTH = os.getenv("DEFAULT_RESPONSE_LENGTH", "Orta")
-CURRENT_TOP_K = int(os.getenv("CURRENT_TOP_K", "5"))
+CURRENT_TOP_K = int(os.getenv("CURRENT_TOP_K", "10"))
 
 
 # --------------------------------------------------------------------------------------------------
@@ -137,6 +139,7 @@ def is_valid_page(page_num: int) -> bool:
     """
     Sayfa filtreleme: PDF sayfa 13-104 arası tez içeriği
     (1-12: ön sayfalar, 105+: kaynakça/ekler)
+    DÜZELTME: Filtreleme aktif (Kaggle'da tüm PDF işlendiği için burada filtre gerekli)
     """
     return PDF_PAGE_START <= page_num <= PDF_PAGE_END
 
@@ -144,6 +147,7 @@ def is_valid_page(page_num: int) -> bool:
 def pdf_to_thesis_page(pdf_page: int) -> int:
     """
     PDF sayfa numarasını tez sayfa numarasına çevirir.
+    DÜZELTME: Offset değeri 0 olarak ayarlandı (negatif sayfa numaraları önlemek için)
     Örnek: PDF sayfa 1 → Tez sayfa 1 (offset 0 ile)
     """
     return pdf_page + PDF_TO_THESIS_OFFSET
@@ -173,10 +177,13 @@ vectorstore = Chroma(
 def ingest_jsonl(file_obj) -> str:
     """
     JSONL dosyasını satır satır okuyup metin + metadata çıkarır ve Chroma'ya ekler.
+    DEBUG: Metadata formatı kontrol edilir ve loglanır.
+    DÜZELTME: Sayfa filtreleme aktif (page_start field'ı kullanılıyor)
     """
     try:
         lines = file_obj.read().decode("utf-8").splitlines()
         texts, metas = [], []
+        print(f"📄 {len(lines)} satır okundu")
         
         for ln in lines:
             row = json.loads(ln)
@@ -185,6 +192,11 @@ def ingest_jsonl(file_obj) -> str:
                 continue
             meta = row.get("meta", {}) or {}
             
+            # DEBUG: İlk 3 metadata'yı kontrol et
+            if len(texts) < 3:
+                print(f"🔍 Metadata {len(texts)+1}: {meta}")
+            
+            # DÜZELTME: Sayfa filtreleme AÇIK - page_start field'ını kullan
             page_num = meta.get("page_start")
             if page_num and not is_valid_page(int(page_num)):
                 continue
@@ -195,6 +207,7 @@ def ingest_jsonl(file_obj) -> str:
         if not texts:
             return "JSONL boş ya da geçerli kayıt bulunamadı."
             
+        print(f"📊 {len(texts)} parça eklenecek")
         vectorstore.add_texts(texts=texts, metadatas=metas)
         return f"JSONL ingest tamamlandı: {len(texts)} parça eklendi."
     except Exception as e:
@@ -204,6 +217,8 @@ def ingest_jsonl(file_obj) -> str:
 def ingest_parquet(file_obj) -> str:
     """
     Parquet dosyasını okuyup "content" ve (varsa) "meta" bilgilerini alır ve Chroma'ya ekler.
+    DEBUG: Metadata formatı kontrol edilir ve loglanır.
+    DÜZELTME: Sayfa filtreleme aktif (page_start field'ı kullanılıyor)
     """
     try:
         df = pd.read_parquet(file_obj)
@@ -223,6 +238,7 @@ def ingest_parquet(file_obj) -> str:
                     if pd.notna(val) and val != "":
                         meta.setdefault(key, val)
             
+            # DÜZELTME: Sayfa filtreleme AÇIK - page_start field'ını kullan
             page_num = meta.get("page_start")
             if page_num and not is_valid_page(int(page_num)):
                 continue
@@ -243,10 +259,11 @@ def ingest_parquet(file_obj) -> str:
 #    - build_prompt: Sistem talimatı + bağlam + soru birleşiminden Gemini istemini kurar.
 #    - generate_with_gemini: Yanıt üretir; metin döndürür.
 # --------------------------------------------------------------------------------------------------
+# DÜZELTME: Sistem mesajı güncellendi - bağlamdaki bilgileri MUTLAKA kullan talimatı eklendi
 SYSTEM_MSG = (
     "Aşağıdaki bağlam parçalarını kullanarak yanıt ver. "
     "Bağlamda verilen TÜM ilgili bilgileri, tarihleri, isimleri ve detayları MUTLAKA dahil et. "
-    "Eğer bağlamda yeterli bilgi yoksa: 'Bu konu tezde yeterli detayla bulunamadı.' de. "
+    "Kaynaklarda yoksa 'Bilmiyorum' de. "
     "Yanıtı tam cümlelerle bitir; maddeleri yarım bırakma."
 )
 
@@ -269,20 +286,24 @@ def page_label(meta: dict) -> str:
     Metadata'dan sayfa etiketini çıkarır.
     Öncelik sırası: page_label > logical_page > page_start/page_end > page (offset ile)
     """
+    # 1) Açık etiket
     if meta.get("page_label"): 
         return str(meta["page_label"])
     if meta.get("logical_page"):
         return str(meta["logical_page"])
     
+    # 2) Aralık (eğer start ve end aynıysa tek sayfa göster)
     if meta.get("page_start") and meta.get("page_end"):
         start = str(meta["page_start"])
         end = str(meta["page_end"])
+        # DÜZELTME: Aynı sayfaysa "16-16" yerine "16" göster
         if start == end:
             return start
         return f"{start}-{end}"
     if meta.get("page_start"):
         return str(meta["page_start"])
     
+    # 3) Fallback: PDF sayfasına offset uygula
     if meta.get("page") is not None:
         try:
             return str(int(meta["page"]) + PDF_TO_THESIS_OFFSET)
@@ -299,7 +320,9 @@ def build_prompt(query: str, docs, length_choice: str) -> str:
       - Bağlam: numaralı satırlar; kaynak adı ve sayfa bilgisi görünür
       - Kullanıcı sorusu
       - Yanıt uzunluğu talimatı
+    DÜZELTME: Sayfa etiketleme sistemi eklendi (belge sayfa numaralarını göstermek için)
     """
+    # Yanıt uzunluğu talimatı
     length_instructions = {
         "Kısa": "Kısa ve öz bir yanıt ver. Sadece temel bilgileri belirt.",
         "Orta": "Detaylı ama özlü bir yanıt ver. Önemli noktaları açıkla.",
@@ -310,6 +333,7 @@ def build_prompt(query: str, docs, length_choice: str) -> str:
     for i, d in enumerate(docs, start=1):
         meta = d.metadata or {}
         src = meta.get("source", "unknown")
+        # DÜZELTME: Sayfa etiketleme sistemi kullanılıyor
         page_display = page_label(meta)
         ctx_lines.append(f"[{i}] ({src} s.{page_display}) {d.page_content}")
     
@@ -331,63 +355,163 @@ def generate_with_gemini(prompt: str, max_tokens: int | None = None) -> str:
     return (resp.text or "").strip()
 
 
+# DÜZELTME: polish_style() fonksiyonu KALDIRILDI
+# Sebep: Kaynak bloğunu siliyordu ve yanıtı bozuyordu
+# Artık yanıt doğrudan kullanıcıya sunuluyor (kaynak bilgisi korunuyor)
+
+
 def answer_fn(message: str, history: List[Tuple[str, str]], length_choice: str) -> str:
     """
     ChatInterface tarafından çağrılır.
-    RAG pipeline: retrieve → build_prompt → generate → format_response
+    DEBUG: Metadata formatı farklı olduğu için page_start kullanılıyor.
+    DÜZELTME: polish_style() kaldırıldı, kaynak bloğu artık korunuyor
     """
     try:
+        # Basit selamlama ve tez dışı sorular için kontrol
         simple_greetings = ["merhaba", "selam", "hello", "hi", "nasılsın", "iyi misin"]
         if message.lower().strip() in simple_greetings:
             return "Merhaba! Yapay Zekâ Dil Modelleri tezi hakkında sorularınızı sorabilirsiniz."
         
+        # DEBUG: Retrieve sonuçlarını kontrol et
         docs = retrieve(message, k=CURRENT_TOP_K)
+        print(f"🔍 DEBUG: {len(docs)} belge bulundu")
         
         if not docs:
-            return "Bu konu tezde bulunamadı veya sorunuzla yeterince ilgili değil."
+            return "Bu konu tezde bulunamadı."
+
+        # DEBUG: Metadata'ları kontrol et
+        for i, doc in enumerate(docs[:3]):  # İlk 3 belgeyi kontrol et
+            meta = doc.metadata or {}
+            print(f"📄 Belge {i+1}: page={meta.get('page')}, page_start={meta.get('page_start')}, source={meta.get('source')}")
 
         prompt = build_prompt(message, docs, length_choice)
         max_tokens = RESPONSE_LENGTH_TO_TOKENS.get(length_choice, RESPONSE_LENGTH_TO_TOKENS["Orta"])
         answer = generate_with_gemini(prompt, max_tokens=max_tokens)
 
-        if not answer:
-            return "Yanıt üretilemedi."
-        
-        if "bulunamadı" in answer.lower() or "yeterli detay" in answer.lower():
-            return answer
-
+        # DEBUG: Kaynak oluşturma
         pages_by_source = {}
         for d in docs:
             m = d.metadata or {}
             display_name = "Yapay Zekâ Dil Modelleri"
+            # DÜZELTME: Sayfa etiketleme sistemi kullanılıyor
             page_display = page_label(m)
+            print(f"🔍 Sayfa etiketi: {page_display}")
             
+            # Sayfa numarasını kaynak listesine ekle (tekrarları önlemek için set kullanılıyor)
             if page_display != "?":
                 pages_by_source.setdefault(display_name, set()).add(page_display)
+                print(f"✅ Kaynak sayfa: {page_display}")
 
+        print(f"📚 Kaynak sayfalar: {pages_by_source}")
+
+        # Kaynak bloğu oluştur
         if pages_by_source:
             def sort_key(p: str):
+                # Sayfa numarasını çıkar (örn: "16" veya "16-17" → "16")
                 head = str(p).split("-")[0]
                 return int(head) if head.isdigit() else 10**9
 
             items = []
             for src, pages in pages_by_source.items():
                 ordered = ", ".join(sorted(pages, key=sort_key))
+                # DÜZELTME: "s." (sayfa) kısaltması kullanılıyor
                 items.append(f"- {src} s. {ordered}")
             
+            # Tek kaynak varsa "Kaynak:", birden fazlaysa "Kaynaklar:"
             sources_block = "Kaynak: " + items[0][2:] if len(items) == 1 else "Kaynaklar:\n" + "\n".join(items)
+            print(f"📝 Kaynak bloğu: {sources_block}")
         else:
-            sources_block = ""
+            sources_block = "Kaynak: Bilinmiyor"
+            print("❌ Hiç kaynak sayfası bulunamadı!")
 
-        if sources_block:
-            final_answer = (answer or "Yanıt üretilemedi.").rstrip() + "\n\n" + sources_block
-        else:
-            final_answer = (answer or "Yanıt üretilemedi.").rstrip()
+        # DÜZELTME: polish_style() KALDIRILDI - kaynak bloğu artık korunuyor
+        # Yanıt + kaynak bloğunu doğrudan birleştir
+        final_answer = (answer or "Yanıt üretilemedi.").rstrip() + "\n\n" + sources_block
         
         return final_answer
 
     except Exception as e:
+        print(f"❌ Hata: {e}")
         return f"Hata: {e}"
+
+
+# --------------------------------------------------------------------------------------------------
+# DEBUG FONKSIYONU - Metadata formatını kontrol eder
+# --------------------------------------------------------------------------------------------------
+def debug_metadata():
+    """Startup'ta metadata formatını kontrol et"""
+    print("\n" + "="*80)
+    print("🔍 METADATA DEBUG BAŞLIYOR")
+    print("="*80)
+    
+    # JSONL kontrolü
+    print("\n📄 JSONL ANALİZİ:")
+    try:
+        with open("data/processed_docs.jsonl", "r", encoding="utf-8") as f:
+            lines = f.readlines()[:3]  # İlk 3 satır
+            print(f"   Toplam satır: {len(lines)}")
+            for i, line in enumerate(lines, 1):
+                record = json.loads(line)
+                meta = record.get("meta", {})
+                content_preview = record.get("content", "")[:80]
+                print(f"\n   Kayıt {i}:")
+                print(f"   İçerik: {content_preview}...")
+                print(f"   Metadata keys: {list(meta.keys())}")
+                for k, v in meta.items():
+                    print(f"      • {k}: {v} (type: {type(v).__name__})")
+    except Exception as e:
+        print(f"   ❌ JSONL hata: {e}")
+    
+    # Parquet kontrolü
+    print("\n📊 PARQUET ANALİZİ:")
+    try:
+        df = pd.read_parquet("data/processed_docs.parquet")
+        print(f"   Sütunlar: {list(df.columns)}")
+        print(f"   Toplam satır: {len(df)}")
+        
+        if len(df) > 0:
+            row = df.iloc[0]
+            print(f"\n   İlk satır:")
+            
+            # Meta sütunu varsa
+            if "meta" in df.columns:
+                meta_val = row.get("meta")
+                if isinstance(meta_val, dict):
+                    print(f"   meta dict keys: {list(meta_val.keys())}")
+                    for k, v in meta_val.items():
+                        print(f"      • {k}: {v}")
+                else:
+                    print(f"   meta değeri dict değil: {type(meta_val)}")
+            
+            # Doğrudan sütunlar
+            for col in ["page", "page_start", "page_end", "page_label", "source"]:
+                if col in df.columns:
+                    val = row.get(col)
+                    if pd.notna(val):
+                        print(f"   {col}: {val} (type: {type(val).__name__})")
+                        
+    except Exception as e:
+        print(f"   ❌ Parquet hata: {e}")
+    
+    # PDF kontrolü
+    print("\n📕 PDF KONTROLÜ:")
+    try:
+        import os
+        pdf_path = "data/tez.pdf"
+        if os.path.exists(pdf_path):
+            size_mb = os.path.getsize(pdf_path) / (1024 * 1024)
+            print(f"   ✅ PDF mevcut: {pdf_path}")
+            print(f"   Boyut: {size_mb:.2f} MB")
+            if size_mb < 0.1:
+                print(f"   ⚠️  UYARI: Dosya çok küçük!")
+        else:
+            print(f"   ❌ PDF bulunamadı: {pdf_path}")
+    except Exception as e:
+        print(f"   ❌ PDF kontrol hatası: {e}")
+    
+    print("\n" + "="*80)
+    print("✅ DEBUG TAMAMLANDI")
+    print("="*80 + "\n")
 
 
 # --------------------------------------------------------------------------------------------------
@@ -398,28 +522,45 @@ def answer_fn(message: str, history: List[Tuple[str, str]], length_choice: str) 
 def auto_ingest_from_repo() -> str:
     """
     Uygulama başlarken veri klasöründeki dosyaları ingest eder.
+    DEBUG: Her adım loglanır ve kontrol edilir.
     """
+    # DEBUG: Önce metadata formatını kontrol et
+    debug_metadata()
+    
     logs = []
+    print("🚀 Auto ingest başlıyor...")
     
     try:
         p = "data/processed_docs.jsonl"
         if os.path.exists(p):
+            print(f"✅ JSONL dosyası bulundu: {p}")
             with open(p, "rb") as f:
                 result = ingest_jsonl(f)
                 logs.append(result)
+                print(f"📊 JSONL sonucu: {result}")
+        else:
+            print(f"❌ JSONL dosyası bulunamadı: {p}")
     except Exception as e:
         logs.append(f"AUTO JSONL hata: {e}")
+        print(f"❌ JSONL hatası: {e}")
 
     try:
         p = "data/processed_docs.parquet"
         if os.path.exists(p):
+            print(f"✅ Parquet dosyası bulundu: {p}")
             with open(p, "rb") as f:
                 result = ingest_parquet(f)
                 logs.append(result)
+                print(f"📊 Parquet sonucu: {result}")
+        else:
+            print(f"❌ Parquet dosyası bulunamadı: {p}")
     except Exception as e:
         logs.append(f"AUTO Parquet hata: {e}")
+        print(f"❌ Parquet hatası: {e}")
 
-    return "\n".join([lg for lg in logs if lg])
+    final_result = "\n".join([lg for lg in logs if lg])
+    print(f"🎯 Final ingest sonucu: {final_result}")
+    return final_result
 
 
 # --------------------------------------------------------------------------------------------------
@@ -481,8 +622,10 @@ input, textarea, .gr-text-input input, .gr-textbox textarea {
 button.primary:hover {
   background-color: #1d4ed8 !important;
 }
+/* Sohbet balonları */
 .gr-chatbot .message.user { background:#eef2ff !important; border-color:#dbe2f3 !important; }
 .gr-chatbot .message.bot  { background:#ffffff !important; border-color:#e3e8f0 !important; }
+/* İçindekiler — estetik kartlar */
 .toc-container { 
   display: flex; 
   flex-direction: column; 
@@ -523,10 +666,8 @@ button.primary:hover {
 }
 """
 
+# ----- Basit sohbet adımı: kullanıcı mesajı → yanıt; input'u temizle -----
 def chat_step(user_message: str, history: list[tuple[str, str]], length_choice: str):
-    """
-    Kullanıcı mesajını işleyip chatbot yanıtını döndürür.
-    """
     msg = (user_message or "").strip()
     if not msg:
         return history, ""
@@ -536,6 +677,7 @@ def chat_step(user_message: str, history: list[tuple[str, str]], length_choice: 
 
 
 with gr.Blocks(title="Yapay Zekâ Dil Modelleri • Kaynaklı Soru‑Cevap", theme=theme, css=css, fill_height=True) as demo:
+    # Ana başlık
     gr.Markdown(
         """
         <div style="padding:10px 0 4px 0;">
@@ -548,8 +690,10 @@ with gr.Blocks(title="Yapay Zekâ Dil Modelleri • Kaynaklı Soru‑Cevap", the
     )
 
     with gr.Row():
+        # Sol panel: Tez indirme + estetik içindekiler + yanıt uzunluğu seçimi
         with gr.Column(scale=1, min_width=400):
             gr.Markdown("### 📄 Tez Dokümanı")
+            # DÜZELTME: Doğru dosya adı (gerçek dosya adı)
             gr.DownloadButton(label="📄 Tezi İndir (PDF)", value="data/tez.pdf")
 
             gr.Markdown("### 📚 İçindekiler")
@@ -595,17 +739,20 @@ with gr.Blocks(title="Yapay Zekâ Dil Modelleri • Kaynaklı Soru‑Cevap", the
                 """
             )
 
+            # Yanıt uzunluğu seçimi
             length_choice = gr.Radio(
                 choices=["Kısa", "Orta", "Uzun"], 
                 value=DEFAULT_RESPONSE_LENGTH, 
                 label="Yanıt uzunluğu"
             )
 
+        # Sağ panel: Sohbet arayüzü
         with gr.Column(scale=2):
             chatbot = gr.Chatbot(height=500, avatar_images=(None, None))
             input_box = gr.Textbox(placeholder="Sorunuzu yazın ve Enter'a basın...", scale=1)
             send_btn = gr.Button("Gönder", variant="primary")
 
+            # Yanıt uzunluğu seçimini chat_step'e parametre olarak geç
             send_btn.click(
                 chat_step, 
                 inputs=[input_box, chatbot, length_choice], 
@@ -627,8 +774,10 @@ with gr.Blocks(title="Yapay Zekâ Dil Modelleri • Kaynaklı Soru‑Cevap", the
                         outputs=[chatbot, input_box]
                     )
 
+    # Uygulama açılışında otomatik ingest (logu UI'da göstermiyoruz)
     _ = auto_ingest_from_repo()
 
 
+# Yerel geliştirme için (HF Spaces'te launch çağrısı gerekmez)
 if __name__ == "__main__":
     demo.launch(server_port=7860, share=False)
