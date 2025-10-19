@@ -289,45 +289,55 @@ SYSTEM_MSG = (
 def retrieve(query: str, k: int):
     """
     Sorgu embedding'i ile Chroma'dan en ilgili k belge parçasını getirir.
-    YENİ: Embedding skoruna küçük bir leksikal yeniden-sıralama (re-rank) eklenir (tüm sorgular için).
+    GÜNCELLEME:
+    - Skorlar distance/negatif olabilir → 0..1 arası benzerliğe normalize edilir.
+    - Leksikal yeniden sıralama (re-rank) tüm sorgular için uygulanır.
     """
     try:
         # Daha zengin havuz için 2x sonuç çek (min 8)
-        results = vectorstore.similarity_search_with_relevance_scores(query, k=max(k * 2, 8))
-        # results: List[(Document, score)]  score: 0..1 (yüksek daha iyi)
+        results = vectorstore.similarity_search_with_score(query, k=max(k * 2, 8))
+        # results: List[(Document, score)]  -> score çoğunlukla distance (küçük = iyi)
         query_keywords = build_query_keywords(query)
-        query_bigrams = build_query_bigrams(query)
+        query_bigrams  = build_query_bigrams(query)
 
-        # Lexical eşleşme sayımı ve normalizasyon
         raw_items = []
         max_hits = 1
-        for doc, emb_score in results:
+        for doc, raw_score in results:
+            # 1) Embedding skorunu 0..1 benzerliğe çevir
+            try:
+                if raw_score is None:
+                    emb_sim = 0.5
+                elif float(raw_score) >= 0:
+                    emb_sim = 1.0 / (1.0 + float(raw_score))   # distance -> similarity
+                else:
+                    emb_sim = 1.0 / (1.0 + abs(float(raw_score)))
+            except Exception:
+                emb_sim = 0.5
+
+            # 2) Leksikal eşleşme (kelime + bigram)
             text = (doc.page_content or "").lower()
             text_tokens = tokenize_for_keywords(text)
-            # kelime eşleşmeleri
-            word_hits = sum(1 for t in text_tokens if t in query_keywords)
-            # ifade (bigram) eşleşmeleri
+            word_hits   = sum(1 for t in text_tokens if t in query_keywords)
             phrase_hits = sum(1 for bg in query_bigrams if bg in text)
-            hits = word_hits + 2 * phrase_hits  # ifadelere biraz daha ağırlık
+            hits = word_hits + 2 * phrase_hits
             max_hits = max(max_hits, hits)
-            raw_items.append((doc, float(emb_score), hits))
 
+            raw_items.append((doc, emb_sim, hits))
+
+        # 3) Birleştir ve sırala
         reranked = []
-        for doc, emb_score, hits in raw_items:
+        for doc, emb_sim, hits in raw_items:
             lexical_norm = hits / max_hits if max_hits > 0 else 0.0
-            combined = 0.85 * emb_score + 0.15 * lexical_norm  # GÜNCELLEME: ağırlıklar
+            combined = 0.85 * emb_sim + 0.15 * lexical_norm
             reranked.append((combined, doc))
 
         reranked.sort(key=lambda x: x[0], reverse=True)
         docs = [doc for _score, doc in reranked[:k]]
-
         if not docs:
-            # Skorlu API hata verirse basit benzerliğe düş
             return vectorstore.similarity_search(query, k=k)
         return docs
     except Exception:
-        docs = vectorstore.similarity_search(query, k=k)
-        return docs
+        return vectorstore.similarity_search(query, k=k)
 
 
 def page_label(meta: dict) -> str:
@@ -335,26 +345,21 @@ def page_label(meta: dict) -> str:
     Metadata'dan sayfa etiketini çıkarır.
     Öncelik sırası: page_label > logical_page > page_start/page_end > page (offset ile)
     """
-    if meta.get("page_label"): 
+    if meta.get("page_label"):
         return str(meta["page_label"])
     if meta.get("logical_page"):
         return str(meta["logical_page"])
-    
     if meta.get("page_start") and meta.get("page_end"):
         start = str(meta["page_start"])
         end = str(meta["page_end"])
-        if start == end:
-            return start
-        return f"{start}-{end}"
+        return start if start == end else f"{start}-{end}"
     if meta.get("page_start"):
         return str(meta["page_start"])
-    
     if meta.get("page") is not None:
         try:
             return str(int(meta["page"]) + PDF_TO_THESIS_OFFSET)
         except Exception:
             return str(meta["page"])
-    
     return "?"
 
 
@@ -371,17 +376,14 @@ def build_prompt(query: str, docs, length_choice: str) -> str:
         "Orta": "Detaylı ama özlü bir yanıt ver. Önemli noktaları açıkla.",
         "Uzun": "Kapsamlı ve detaylı bir yanıt ver. Tüm ilgili bilgileri, örnekleri ve açıklamaları dahil et."
     }
-    
     ctx_lines = []
     for i, d in enumerate(docs, start=1):
         meta = d.metadata or {}
         src = meta.get("source", "unknown")
         page_display = page_label(meta)
         ctx_lines.append(f"[{i}] ({src} s.{page_display}) {d.page_content}")
-    
     context = "\n\n".join(ctx_lines) if ctx_lines else "(bağlam yok)"
     length_instruction = length_instructions.get(length_choice, length_instructions["Orta"])
-    
     return f"{SYSTEM_MSG}\n\n{length_instruction}\n\nBağlam:\n{context}\n\nSoru: {query}\nYanıt:"
 
 
@@ -401,33 +403,31 @@ def answer_fn(message: str, history: List[Tuple[str, str]], length_choice: str) 
     """
     ChatInterface tarafından çağrılır.
     RAG pipeline: retrieve → build_prompt → generate → format_response
-    YENİ: Uyarı notu artık HER DURUMDA görünür (kaynak bloğu olsun/olmasın).
+    GÜNCELLEME:
+    - "Tezde bulunamadı" veya "yanıt üretilemedi" durumlarında kaynak/uyarı GÖSTERİLMEZ.
+    - Uyarı yalnızca kaynak bloğu varsa eklenir.
     """
     try:
         simple_greetings = ["merhaba", "selam", "hello", "hi", "nasılsın", "iyi misin"]
         if message.lower().strip() in simple_greetings:
             return "Merhaba! Yapay Zekâ Dil Modelleri tezi hakkında sorularınızı sorabilirsiniz."
-        
+
         docs = retrieve(message, k=CURRENT_TOP_K)
-        
         if not docs:
-            base_msg = "Bu konu tezde bulunamadı veya sorunuzla yeterince ilgili değil."
-            warning_note = "\n\nℹ️ Bu yanıt birden fazla sayfadan derlenmiştir. Tam bilgi için kaynak sayfalara göz atın."
-            return base_msg + warning_note
+            return "Bu konu tezde bulunamadı veya sorunuzla yeterince ilgili değil."
 
         prompt = build_prompt(message, docs, length_choice)
         max_tokens = RESPONSE_LENGTH_TO_TOKENS.get(length_choice, RESPONSE_LENGTH_TO_TOKENS["Orta"])
         answer = generate_with_gemini(prompt, max_tokens=max_tokens)
-
         if not answer:
-            warning_note = "\n\nℹ️ Bu yanıt birden fazla sayfadan derlenmiştir. Tam bilgi için kaynak sayfalara göz atın."
-            return "Yanıt üretilemedi." + warning_note
-        
-        if "bulunamadı" in answer.lower() or "yeterli detay" in answer.lower():
-            warning_note = "\n\nℹ️ Bu yanıt birden fazla sayfadan derlenmiştir. Tam bilgi için kaynak sayfalara göz atın."
-            return answer + warning_note
+            return "Yanıt üretilemedi."
 
-        # Kaynak sayfaları toplama
+        # Model "bulunamadı" vb. diyorsa aynen döndür; kaynak/uyarı ekleme.
+        low_answer = answer.lower()
+        if ("bulunamadı" in low_answer) or ("yeterli detay" in low_answer):
+            return answer
+
+        # Kaynak sayfaları topla
         pages_by_source = {}
         for d in docs:
             m = d.metadata or {}
@@ -436,30 +436,24 @@ def answer_fn(message: str, history: List[Tuple[str, str]], length_choice: str) 
             if page_display != "?":
                 pages_by_source.setdefault(display_name, set()).add(page_display)
 
-        # Kaynak bloğu oluşturma
+        # Kaynak bloğu
         if pages_by_source:
             def sort_key(p: str):
                 head = str(p).split("-")[0]
                 return int(head) if head.isdigit() else 10**9
-
             items = []
             for src, pages in pages_by_source.items():
                 ordered = ", ".join(sorted(pages, key=sort_key))
                 items.append(f"- {src} s. {ordered}")
-            
             sources_block = "Kaynak: " + items[0][2:] if len(items) == 1 else "Kaynaklar:\n" + "\n".join(items)
-        else:
-            sources_block = ""
 
-        # UYARI: Her durumda (tek sayfa/çok sayfa/hiç kaynak) göster
-        warning_note = "\n\nℹ️ Bu yanıt birden fazla sayfadan derlenmiştir. Tam bilgi için kaynak sayfalara göz atın."
-
-        if sources_block:
+            # Yalnızca kaynak bloğu varsa uyarı ekle
+            warning_note = "\n\nℹ️ Bu yanıt birden fazla sayfadan derlenmiştir. Tam bilgi için kaynak sayfalara göz atın."
             final_answer = (answer or "Yanıt üretilemedi.").rstrip() + "\n\n" + sources_block + warning_note
-        else:
-            final_answer = (answer or "Yanıt üretilemedi.").rstrip() + warning_note
-        
-        return final_answer
+            return final_answer
+
+        # Kaynak yoksa sadece yanıtı döndür
+        return (answer or "Yanıt üretilemedi.").rstrip()
 
     except Exception as e:
         return f"Hata: {e}"
@@ -475,7 +469,6 @@ def auto_ingest_from_repo() -> str:
     Uygulama başlarken veri klasöründeki dosyaları ingest eder.
     """
     logs = []
-    
     try:
         p = "data/processed_docs.jsonl"
         if os.path.exists(p):
@@ -509,7 +502,7 @@ def auto_ingest_from_repo() -> str:
 #    - Bu sürümde dosya yükleme kapalıdır; veri açılışta otomatik yüklenir.
 #    - Sol panel: Tez indirme + estetik içindekiler + yanıt uzunluğu seçimi
 #    - Sağ panel: Sohbet arayüzü
-#    YENİ: Başlıkta Yazar/Danışman/Kapsam bilgisi kalıcı gösterilir
+#    Yazar/Danışman/Kapsam başlıkta kalıcı gösterilir.
 # --------------------------------------------------------------------------------------------------
 EXAMPLES = [
     "Tezin temel problem tanımı nedir?",
@@ -619,7 +612,6 @@ def chat_step(user_message: str, history: list[tuple[str, str]], length_choice: 
 
 
 with gr.Blocks(title="Yapay Zekâ Dil Modelleri • Kaynaklı Soru‑Cevap", theme=theme, css=css, fill_height=True) as demo:
-    # YENİ: Ana başlık + Yazar/Danışman/Kapsam bilgisi KALICI
     gr.Markdown(
         """
         <div style="padding:10px 0 4px 0;">
@@ -657,24 +649,24 @@ with gr.Blocks(title="Yapay Zekâ Dil Modelleri • Kaynaklı Soru‑Cevap", the
             )
 
             length_choice = gr.Radio(
-                choices=["Kısa", "Orta", "Uzun"], 
-                value=DEFAULT_RESPONSE_LENGTH, 
+                choices=["Kısa", "Orta", "Uzun"],
+                value=DEFAULT_RESPONSE_LENGTH,
                 label="Yanıt uzunluğu"
             )
 
         with gr.Column(scale=2):
-            chatbot = gr.Chatbot(height=500, avatar_images=(None, None))
+            chatbot = gr.Chatbot(height=500, avatar_images=(None, None), type="messages")
             input_box = gr.Textbox(placeholder="Sorunuzu yazın ve Enter'a basın...", scale=1)
             send_btn = gr.Button("Gönder", variant="primary")
 
             send_btn.click(
-                chat_step, 
-                inputs=[input_box, chatbot, length_choice], 
+                chat_step,
+                inputs=[input_box, chatbot, length_choice],
                 outputs=[chatbot, input_box]
             )
             input_box.submit(
-                chat_step, 
-                inputs=[input_box, chatbot, length_choice], 
+                chat_step,
+                inputs=[input_box, chatbot, length_choice],
                 outputs=[chatbot, input_box]
             )
 
@@ -683,8 +675,8 @@ with gr.Blocks(title="Yapay Zekâ Dil Modelleri • Kaynaklı Soru‑Cevap", the
                     gr.Button(q, variant="secondary", scale=1).click(
                         lambda s=q: s, outputs=input_box
                     ).then(
-                        chat_step, 
-                        inputs=[input_box, chatbot, length_choice], 
+                        chat_step,
+                        inputs=[input_box, chatbot, length_choice],
                         outputs=[chatbot, input_box]
                     )
 
