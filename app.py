@@ -186,6 +186,9 @@ def pdf_to_thesis_page(pdf_page: int) -> int:
 #    - Embedding: Türkçe için SentenceTransformers modeli (HF üzerinden çekilir).
 #    - Chroma: .chroma klasörüne kalıcı olarak yazar (Space yeniden başlasa da veri korunur).
 # --------------------------------------------------------------------------------------------------
+# YENİ: CHROMA dizinini garantiye al
+os.makedirs(CHROMA_PERSIST_DIR, exist_ok=True)
+
 embeddings = HuggingFaceEmbeddings(model_name=EMBEDDINGS_MODEL)
 
 chroma_client = chromadb.PersistentClient(path=CHROMA_PERSIST_DIR)
@@ -491,6 +494,13 @@ def auto_ingest_from_repo() -> str:
     except Exception as e:
         logs.append(f"AUTO Parquet hata: {e}")
 
+    # YENİ: ingest sonrası koleksiyon sayımı logla (HF Spaces konsolu için faydalı)
+    try:
+        cnt = vectorstore._collection.count()
+        logs.append(f"[Chroma] persist_dir={CHROMA_PERSIST_DIR} | collection='docs' | count={cnt}")
+    except Exception as e:
+        logs.append(f"[Chroma] count okunamadı: {e}")
+
     return "\n".join([lg for lg in logs if lg])
 
 
@@ -499,6 +509,7 @@ def auto_ingest_from_repo() -> str:
 #    - Bu sürümde dosya yükleme kapalıdır; veri açılışta otomatik yüklenir.
 #    - Sol panel: Tez indirme + estetik içindekiler + yanıt uzunluğu seçimi
 #    - Sağ panel: Sohbet arayüzü
+#    YENİ: Başlıkta Yazar/Danışman/Kapsam bilgisi kalıcı gösterilir
 # --------------------------------------------------------------------------------------------------
 EXAMPLES = [
     "Tezin temel problem tanımı nedir?",
@@ -608,12 +619,18 @@ def chat_step(user_message: str, history: list[tuple[str, str]], length_choice: 
 
 
 with gr.Blocks(title="Yapay Zekâ Dil Modelleri • Kaynaklı Soru‑Cevap", theme=theme, css=css, fill_height=True) as demo:
+    # YENİ: Ana başlık + Yazar/Danışman/Kapsam bilgisi KALICI
     gr.Markdown(
         """
         <div style="padding:10px 0 4px 0;">
           <h2 style="margin:0;color:#0b1220;">Yapay Zekâ Dil Modelleri — Tez Asistanı</h2>
           <div style="color:#334155;margin-top:8px;">
             Bu arayüz, 'Yapay Zekâ Dil Modelleri' tezi temel alınarak sorularınıza yanıt verir; ilgili pasajları bulur ve kaynak sayfalarıyla birlikte sunar.
+          </div>
+          <div style="color:#64748b;font-size:0.9em;margin-top:8px;">
+            📝 <strong>Yazar:</strong> Yağmur ÇORUM |
+            👨‍🏫 <strong>Danışman:</strong> Prof. Dr. Burak ORDİN |
+            📚 <strong>Kapsam:</strong> Bölüm 1-7 (Ana İçerik)
           </div>
         </div>
         """,
@@ -671,7 +688,9 @@ with gr.Blocks(title="Yapay Zekâ Dil Modelleri • Kaynaklı Soru‑Cevap", the
                         outputs=[chatbot, input_box]
                     )
 
-    _ = auto_ingest_from_repo()
+    logs = auto_ingest_from_repo()
+    if logs:
+        print(logs)
 
 
 if __name__ == "__main__":
