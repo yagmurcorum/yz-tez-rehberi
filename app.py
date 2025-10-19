@@ -83,12 +83,12 @@ GENERATION_CFG = dict(
 
 # Yanıt uzunluğu ön ayarları (STRICT RAG)
 RESPONSE_LENGTH_TO_TOKENS = {
-    "Kısa": 200,
+    "Kısa": 400,
     "Orta": 800,
     "Uzun": 1500
 }
 DEFAULT_RESPONSE_LENGTH = os.getenv("DEFAULT_RESPONSE_LENGTH", "Orta")
-CURRENT_TOP_K = int(os.getenv("CURRENT_TOP_K", "3")) 
+CURRENT_TOP_K = int(os.getenv("CURRENT_TOP_K", "5"))
 
 
 # --------------------------------------------------------------------------------------------------
@@ -110,14 +110,14 @@ def clean_text(s: str) -> str:
     return s.strip()
 
 
-def split_into_chunks(text: str, size: int = 400, overlap: int = 200) -> List[str]:  # DÜZELTME
+def split_into_chunks(text: str, size: int = 800, overlap: int = 120) -> List[str]:
     """
     Metni kelime bazlı parçalara böler.
     Parametreler:
-      - size: hedef parça uzunluğu (kelime) - 800 → 400
-      - overlap: art arda gelen parçalar arasındaki ortak kelime sayısı - 120 → 200
+      - size: hedef parça uzunluğu (kelime)
+      - overlap: art arda gelen parçalar arasındaki ortak kelime sayısı
     Not:
-      - Daha küçük chunk'lar, daha fazla overlap
+      - RAG'de 512–800 kelime iyi bir başlangıç aralığıdır; overlap 80–120 önerilir.
     """
     words = (text or "").split()
     if not words:
@@ -251,28 +251,15 @@ SYSTEM_MSG = (
 )
 
 
-def retrieve(query: str, k: int):  # DÜZELTME
+def retrieve(query: str, k: int):
     """
-    Sıkı filtreleme ile sadece gerçekten ilgili kaynakları getir
+    Sorgu embedding'i ile Chroma'dan en ilgili k belge parçasını getirir.
     """
     try:
-        # Önce 2 kat fazla getir
-        results = vectorstore.similarity_search_with_relevance_scores(query, k=k*2)
-        
-        # Sıkı filtreleme uygula
-        filtered_docs = []
-        for doc, score in results:
-            if score > 0.7:  # SIKI FİLTRELEME!
-                filtered_docs.append((doc, score))
-        
-        # Skorlara göre sırala
-        filtered_docs.sort(key=lambda x: x[1], reverse=True)
-        
-        # İlk k tanesini döndür
-        return [doc for doc, score in filtered_docs[:k]]
-        
+        results = vectorstore.similarity_search_with_relevance_scores(query, k=k)
+        docs = [doc for doc, _score in results]
+        return docs
     except Exception:
-        # Fallback
         docs = vectorstore.similarity_search(query, k=k)
         return docs
 
