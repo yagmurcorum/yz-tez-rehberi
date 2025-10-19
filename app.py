@@ -133,38 +133,6 @@ def split_into_chunks(text: str, size: int = 800, overlap: int = 120) -> List[st
     return chunks
 
 
-# YENİ: Basit tokenizasyon ve sorgudan anahtar çıkarımı (genel; sayfaya/konuya özgü değil)
-def tokenize_for_keywords(text: str) -> list[str]:
-    """
-    YENİ:
-    - Küçük harfe indir, TR karakterleri basit normalize et
-    - Harf/rakam dışını boşlukla değiştir
-    - 1 karakterlik parçaları ele
-    """
-    txt = (text or "").lower()
-    tr_map = str.maketrans("çğıöşüâîû", "cgiosuaiu")
-    txt = txt.translate(tr_map)
-    txt = re.sub(r"[^a-z0-9ğüşıöç ]", " ", txt)
-    tokens = [t for t in txt.split() if len(t) > 1]
-    return tokens
-
-
-# GÜNCELLEME: Sadece sorgudan türeyen anahtarlar (stop-words hariç). Sayfaya/konuya özgü değil.
-def build_query_keywords(query: str) -> set[str]:
-    tokens = tokenize_for_keywords(query)
-    stop = {
-        "ve","ile","mi","nedir","nelerdir","hangi","temel","alan","olarak","da","de","bir","icin",
-        "nasil","ne","kim","neydi","neye","hakkinda","uzerine","ileti","olan","midir","midirki"
-    }
-    return {t for t in tokens if t not in stop and len(t) > 2}
-
-
-# YENİ: Sorgudan basit ikili ifadeler (bigram) üret (genel eşleşmeyi güçlendirir)
-def build_query_bigrams(query: str) -> set[str]:
-    toks = [t for t in tokenize_for_keywords(query) if len(t) > 2]
-    return {" ".join([toks[i], toks[i + 1]]) for i in range(len(toks) - 1)}
-
-
 def is_valid_page(page_num: int) -> bool:
     """
     Sayfa filtreleme: PDF sayfa 13-104 arası tez içeriği
@@ -286,38 +254,14 @@ SYSTEM_MSG = (
 def retrieve(query: str, k: int):
     """
     Sorgu embedding'i ile Chroma'dan en ilgili k belge parçasını getirir.
-    GÜNCELLEME: Skorsuz, güvenli arama kullanılır; üstüne genel leksikal re‑rank uygulanır.
     """
     try:
-        # Daha zengin havuz için 2x sonuç çek (min 8)
-        pool_docs = vectorstore.similarity_search(query, k=max(k * 2, 8))
+        results = vectorstore.similarity_search_with_relevance_scores(query, k=k)
+        docs = [doc for doc, _score in results]
+        return docs
     except Exception:
-        pool_docs = []
-
-    if not pool_docs:
-        return []
-
-    # YENİ: Genel leksikal re‑rank (sadece sorgudan türeyen anahtarlar)
-    query_keywords = build_query_keywords(query)
-    query_bigrams  = build_query_bigrams(query)
-
-    def lexical_hits(text: str) -> int:
-        t = (text or "").lower()
-        toks = tokenize_for_keywords(t)
-        word_hits   = sum(1 for tok in toks if tok in query_keywords)
-        phrase_hits = sum(1 for bg in query_bigrams if bg in t)
-        return word_hits + 2 * phrase_hits
-
-    scored = [(lexical_hits(doc.page_content), idx, doc) for idx, doc in enumerate(pool_docs)]
-    max_hit = max((h for h, _, _ in scored), default=0)
-
-    # Eğer eşleşme yoksa, Chroma'nın kendi sıralamasını koru
-    if max_hit == 0:
-        return pool_docs[:k]
-
-    # Aksi halde, leksikal skora göre sırala (eşitlikte orijinal sırayı koru)
-    scored.sort(key=lambda x: (x[0], -x[1]), reverse=True)
-    return [doc for _h, _i, doc in scored[:k]]
+        docs = vectorstore.similarity_search(query, k=k)
+        return docs
 
 
 def page_label(meta: dict) -> str:
@@ -486,7 +430,7 @@ def auto_ingest_from_repo() -> str:
 #    - Bu sürümde dosya yükleme kapalıdır; veri açılışta otomatik yüklenir.
 #    - Sol panel: Tez indirme + estetik içindekiler + yanıt uzunluğu seçimi
 #    - Sağ panel: Sohbet arayüzü
-#    YENİ: Başlıkta Yazar/Danışman/Kapsam bilgisi kalıcı gösterilir
+#    Başlıkta Yazar/Danışman/Kapsam bilgisi gösterilir.
 # --------------------------------------------------------------------------------------------------
 EXAMPLES = [
     "Tezin temel problem tanımı nedir?",
@@ -596,7 +540,6 @@ def chat_step(user_message: str, history: list[tuple[str, str]], length_choice: 
 
 
 with gr.Blocks(title="Yapay Zekâ Dil Modelleri • Kaynaklı Soru‑Cevap", theme=theme, css=css, fill_height=True) as demo:
-    # YENİ: Ana başlık + Yazar/Danışman/Kapsam bilgisi KALICI
     gr.Markdown(
         """
         <div style="padding:10px 0 4px 0;">
@@ -605,8 +548,8 @@ with gr.Blocks(title="Yapay Zekâ Dil Modelleri • Kaynaklı Soru‑Cevap", the
             Bu arayüz, 'Yapay Zekâ Dil Modelleri' tezi temel alınarak sorularınıza yanıt verir; ilgili pasajları bulur ve kaynak sayfalarıyla birlikte sunar.
           </div>
           <div style="color:#64748b;font-size:0.9em;margin-top:8px;">
-            📝 <strong>Yazar:</strong> Yağmur ÇORUM |
-            👨‍🏫 <strong>Danışman:</strong> Prof. Dr. Burak ORDİN |
+            📝 <strong>Yazar:</strong> Yağmur ÇORUM | 
+            👨‍🏫 <strong>Danışman:</strong> Prof. Dr. Burak ORDİN | 
             📚 <strong>Kapsam:</strong> Bölüm 1-7 (Ana İçerik)
           </div>
         </div>
@@ -640,8 +583,7 @@ with gr.Blocks(title="Yapay Zekâ Dil Modelleri • Kaynaklı Soru‑Cevap", the
             )
 
         with gr.Column(scale=2):
-            # GÜNCELLEME: Gradio uyarısını susturmak için type="messages"
-            chatbot = gr.Chatbot(height=500, avatar_images=(None, None), type="messages")
+            chatbot = gr.Chatbot(height=500, avatar_images=(None, None))
             input_box = gr.Textbox(placeholder="Sorunuzu yazın ve Enter'a basın...", scale=1)
             send_btn = gr.Button("Gönder", variant="primary")
 
