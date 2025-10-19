@@ -335,6 +335,7 @@ def answer_fn(message: str, history: List[Tuple[str, str]], length_choice: str) 
     """
     ChatInterface tarafından çağrılır.
     RAG pipeline: retrieve → build_prompt → generate → format_response
+    YENİ: Birden fazla sayfadan derlenen yanıtlar için uyarı eklendi
     """
     try:
         simple_greetings = ["merhaba", "selam", "hello", "hi", "nasılsın", "iyi misin"]
@@ -356,6 +357,7 @@ def answer_fn(message: str, history: List[Tuple[str, str]], length_choice: str) 
         if "bulunamadı" in answer.lower() or "yeterli detay" in answer.lower():
             return answer
 
+        # Kaynak sayfaları toplama
         pages_by_source = {}
         for d in docs:
             m = d.metadata or {}
@@ -365,6 +367,7 @@ def answer_fn(message: str, history: List[Tuple[str, str]], length_choice: str) 
             if page_display != "?":
                 pages_by_source.setdefault(display_name, set()).add(page_display)
 
+        # Kaynak bloğu oluşturma
         if pages_by_source:
             def sort_key(p: str):
                 head = str(p).split("-")[0]
@@ -376,6 +379,11 @@ def answer_fn(message: str, history: List[Tuple[str, str]], length_choice: str) 
                 items.append(f"- {src} s. {ordered}")
             
             sources_block = "Kaynak: " + items[0][2:] if len(items) == 1 else "Kaynaklar:\n" + "\n".join(items)
+            
+            # YENİ: 3'ten fazla sayfa varsa uyarı ekle
+            total_pages = sum(len(pages) for pages in pages_by_source.values())
+            if total_pages > 3:
+                sources_block += "\n\nℹ️ Bu yanıt birden fazla sayfadan derlenmiştir. Tam bilgi için kaynak sayfalara göz atın."
         else:
             sources_block = ""
 
@@ -427,6 +435,7 @@ def auto_ingest_from_repo() -> str:
 #    - Bu sürümde dosya yükleme kapalıdır; veri açılışta otomatik yüklenir.
 #    - Sol panel: Tez indirme + estetik içindekiler + yanıt uzunluğu seçimi
 #    - Sağ panel: Sohbet arayüzü
+#    YENİ: Ana başlığa yazar ve danışman bilgisi eklendi
 # --------------------------------------------------------------------------------------------------
 EXAMPLES = [
     "Tezin temel problem tanımı nedir?",
@@ -536,12 +545,18 @@ def chat_step(user_message: str, history: list[tuple[str, str]], length_choice: 
 
 
 with gr.Blocks(title="Yapay Zekâ Dil Modelleri • Kaynaklı Soru‑Cevap", theme=theme, css=css, fill_height=True) as demo:
+    # YENİ: Ana başlık + Yazar/Danışman/Kapsam bilgisi eklendi
     gr.Markdown(
         """
         <div style="padding:10px 0 4px 0;">
           <h2 style="margin:0;color:#0b1220;">Yapay Zekâ Dil Modelleri — Tez Asistanı</h2>
-          <div style="color:#334155">
+          <div style="color:#334155;margin-top:8px;">
             Bu arayüz, 'Yapay Zekâ Dil Modelleri' tezi temel alınarak sorularınıza yanıt verir; ilgili pasajları bulur ve kaynak sayfalarıyla birlikte sunar.
+          </div>
+          <div style="color:#64748b;font-size:0.9em;margin-top:8px;">
+            📝 <strong>Yazar:</strong> Yağmur ÇORUM | 
+            👨‍🏫 <strong>Danışman:</strong> Prof. Dr. Burak ORDİN | 
+            📚 <strong>Kapsam:</strong> Bölüm 1-7 (Ana İçerik)
           </div>
         </div>
         """,
