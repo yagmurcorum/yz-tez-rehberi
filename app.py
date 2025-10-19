@@ -335,7 +335,7 @@ def answer_fn(message: str, history: List[Tuple[str, str]], length_choice: str) 
     """
     ChatInterface tarafından çağrılır.
     RAG pipeline: retrieve → build_prompt → generate → format_response
-    YENİ: Birden fazla sayfadan derlenen yanıtlar için uyarı eklendi
+    YENİ: Uyarı notu artık HER DURUMDA görünür (kaynak bloğu olsun/olmasın).
     """
     try:
         simple_greetings = ["merhaba", "selam", "hello", "hi", "nasılsın", "iyi misin"]
@@ -345,17 +345,24 @@ def answer_fn(message: str, history: List[Tuple[str, str]], length_choice: str) 
         docs = retrieve(message, k=CURRENT_TOP_K)
         
         if not docs:
-            return "Bu konu tezde bulunamadı veya sorunuzla yeterince ilgili değil."
+            # Kaynak bulunamadığında da uyarı göstermek için final metne ekleyeceğiz
+            base_msg = "Bu konu tezde bulunamadı veya sorunuzla yeterince ilgili değil."
+            warning_note = "\n\nℹ️ Bu yanıt birden fazla sayfadan derlenmiştir. Tam bilgi için kaynak sayfalara göz atın."
+            return base_msg + warning_note
 
         prompt = build_prompt(message, docs, length_choice)
         max_tokens = RESPONSE_LENGTH_TO_TOKENS.get(length_choice, RESPONSE_LENGTH_TO_TOKENS["Orta"])
         answer = generate_with_gemini(prompt, max_tokens=max_tokens)
 
         if not answer:
-            return "Yanıt üretilemedi."
+            # Üretilemeyen yanıtlarda da uyarı göster
+            warning_note = "\n\nℹ️ Bu yanıt birden fazla sayfadan derlenmiştir. Tam bilgi için kaynak sayfalara göz atın."
+            return "Yanıt üretilemedi." + warning_note
         
         if "bulunamadı" in answer.lower() or "yeterli detay" in answer.lower():
-            return answer
+            # Model “bulunamadı” dediyse de uyarı ekle
+            warning_note = "\n\nℹ️ Bu yanıt birden fazla sayfadan derlenmiştir. Tam bilgi için kaynak sayfalara göz atın."
+            return answer + warning_note
 
         # Kaynak sayfaları toplama
         pages_by_source = {}
@@ -363,7 +370,6 @@ def answer_fn(message: str, history: List[Tuple[str, str]], length_choice: str) 
             m = d.metadata or {}
             display_name = "Yapay Zekâ Dil Modelleri"
             page_display = page_label(m)
-            
             if page_display != "?":
                 pages_by_source.setdefault(display_name, set()).add(page_display)
 
@@ -379,18 +385,18 @@ def answer_fn(message: str, history: List[Tuple[str, str]], length_choice: str) 
                 items.append(f"- {src} s. {ordered}")
             
             sources_block = "Kaynak: " + items[0][2:] if len(items) == 1 else "Kaynaklar:\n" + "\n".join(items)
-            
-            # YENİ: 3'ten fazla sayfa varsa uyarı ekle
-            total_pages = sum(len(pages) for pages in pages_by_source.values())
-            if total_pages > 3:
-                sources_block += "\n\nℹ️ Bu yanıt birden fazla sayfadan derlenmiştir. Tam bilgi için kaynak sayfalara göz atın."
         else:
             sources_block = ""
 
+        # UYARI: Her durumda (tek sayfa/çok sayfa/hiç kaynak) göster
+        warning_note = "\n\nℹ️ Bu yanıt birden fazla sayfadan derlenmiştir. Tam bilgi için kaynak sayfalara göz atın."
+
         if sources_block:
-            final_answer = (answer or "Yanıt üretilemedi.").rstrip() + "\n\n" + sources_block
+            # Kaynak bloğunun hemen altına uyarıyı ekle
+            final_answer = (answer or "Yanıt üretilemedi.").rstrip() + "\n\n" + sources_block + warning_note
         else:
-            final_answer = (answer or "Yanıt üretilemedi.").rstrip()
+            # Kaynak yoksa bile uyarı cevabın altına eklenecek
+            final_answer = (answer or "Yanıt üretilemedi.").rstrip() + warning_note
         
         return final_answer
 
