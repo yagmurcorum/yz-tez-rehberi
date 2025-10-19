@@ -133,6 +133,38 @@ def split_into_chunks(text: str, size: int = 800, overlap: int = 120) -> List[st
     return chunks
 
 
+# YENİ: Basit tokenizasyon ve sorgudan anahtar çıkarımı (genel; sayfaya/konuya özgü değil)
+def tokenize_for_keywords(text: str) -> list[str]:
+    """
+    YENİ:
+    - Küçük harfe indir, TR karakterleri basit normalize et
+    - Harf/rakam dışını boşlukla değiştir
+    - 1 karakterlik parçaları ele
+    """
+    txt = (text or "").lower()
+    tr_map = str.maketrans("çğıöşüâîû", "cgiosuaiu")
+    txt = txt.translate(tr_map)
+    txt = re.sub(r"[^a-z0-9ğüşıöç ]", " ", txt)
+    tokens = [t for t in txt.split() if len(t) > 1]
+    return tokens
+
+
+# GÜNCELLEME: Sadece sorgudan türeyen anahtarlar (stop-words hariç). Sayfaya/konuya özgü değil.
+def build_query_keywords(query: str) -> set[str]:
+    tokens = tokenize_for_keywords(query)
+    stop = {
+        "ve","ile","mi","nedir","nelerdir","hangi","temel","alan","olarak","da","de","bir","icin",
+        "nasil","ne","kim","neydi","neye","hakkinda","uzerine","ileti","olan","midir","midirki"
+    }
+    return {t for t in tokens if t not in stop and len(t) > 2}
+
+
+# YENİ: Sorgudan basit ikili ifadeler (bigram) üret (genel eşleşmeyi güçlendirir)
+def build_query_bigrams(query: str) -> set[str]:
+    toks = [t for t in tokenize_for_keywords(query) if len(t) > 2]
+    return {" ".join([toks[i], toks[i + 1]]) for i in range(len(toks) - 1)}
+
+
 def is_valid_page(page_num: int) -> bool:
     """
     Sayfa filtreleme: PDF sayfa 13-104 arası tez içeriği
@@ -254,10 +286,41 @@ SYSTEM_MSG = (
 def retrieve(query: str, k: int):
     """
     Sorgu embedding'i ile Chroma'dan en ilgili k belge parçasını getirir.
+    YENİ: Embedding skoruna küçük bir leksikal yeniden-sıralama (re-rank) eklenir (tüm sorgular için).
     """
     try:
-        results = vectorstore.similarity_search_with_relevance_scores(query, k=k)
-        docs = [doc for doc, _score in results]
+        # Daha zengin havuz için 2x sonuç çek (min 8)
+        results = vectorstore.similarity_search_with_relevance_scores(query, k=max(k * 2, 8))
+        # results: List[(Document, score)]  score: 0..1 (yüksek daha iyi)
+        query_keywords = build_query_keywords(query)
+        query_bigrams = build_query_bigrams(query)
+
+        # Lexical eşleşme sayımı ve normalizasyon
+        raw_items = []
+        max_hits = 1
+        for doc, emb_score in results:
+            text = (doc.page_content or "").lower()
+            text_tokens = tokenize_for_keywords(text)
+            # kelime eşleşmeleri
+            word_hits = sum(1 for t in text_tokens if t in query_keywords)
+            # ifade (bigram) eşleşmeleri
+            phrase_hits = sum(1 for bg in query_bigrams if bg in text)
+            hits = word_hits + 2 * phrase_hits  # ifadelere biraz daha ağırlık
+            max_hits = max(max_hits, hits)
+            raw_items.append((doc, float(emb_score), hits))
+
+        reranked = []
+        for doc, emb_score, hits in raw_items:
+            lexical_norm = hits / max_hits if max_hits > 0 else 0.0
+            combined = 0.85 * emb_score + 0.15 * lexical_norm  # GÜNCELLEME: ağırlıklar
+            reranked.append((combined, doc))
+
+        reranked.sort(key=lambda x: x[0], reverse=True)
+        docs = [doc for _score, doc in reranked[:k]]
+
+        if not docs:
+            # Skorlu API hata verirse basit benzerliğe düş
+            return vectorstore.similarity_search(query, k=k)
         return docs
     except Exception:
         docs = vectorstore.similarity_search(query, k=k)
@@ -345,7 +408,6 @@ def answer_fn(message: str, history: List[Tuple[str, str]], length_choice: str) 
         docs = retrieve(message, k=CURRENT_TOP_K)
         
         if not docs:
-            # Kaynak bulunamadığında da uyarı göstermek için final metne ekleyeceğiz
             base_msg = "Bu konu tezde bulunamadı veya sorunuzla yeterince ilgili değil."
             warning_note = "\n\nℹ️ Bu yanıt birden fazla sayfadan derlenmiştir. Tam bilgi için kaynak sayfalara göz atın."
             return base_msg + warning_note
@@ -355,12 +417,10 @@ def answer_fn(message: str, history: List[Tuple[str, str]], length_choice: str) 
         answer = generate_with_gemini(prompt, max_tokens=max_tokens)
 
         if not answer:
-            # Üretilemeyen yanıtlarda da uyarı göster
             warning_note = "\n\nℹ️ Bu yanıt birden fazla sayfadan derlenmiştir. Tam bilgi için kaynak sayfalara göz atın."
             return "Yanıt üretilemedi." + warning_note
         
         if "bulunamadı" in answer.lower() or "yeterli detay" in answer.lower():
-            # Model “bulunamadı” dediyse de uyarı ekle
             warning_note = "\n\nℹ️ Bu yanıt birden fazla sayfadan derlenmiştir. Tam bilgi için kaynak sayfalara göz atın."
             return answer + warning_note
 
@@ -392,10 +452,8 @@ def answer_fn(message: str, history: List[Tuple[str, str]], length_choice: str) 
         warning_note = "\n\nℹ️ Bu yanıt birden fazla sayfadan derlenmiştir. Tam bilgi için kaynak sayfalara göz atın."
 
         if sources_block:
-            # Kaynak bloğunun hemen altına uyarıyı ekle
             final_answer = (answer or "Yanıt üretilemedi.").rstrip() + "\n\n" + sources_block + warning_note
         else:
-            # Kaynak yoksa bile uyarı cevabın altına eklenecek
             final_answer = (answer or "Yanıt üretilemedi.").rstrip() + warning_note
         
         return final_answer
@@ -441,7 +499,6 @@ def auto_ingest_from_repo() -> str:
 #    - Bu sürümde dosya yükleme kapalıdır; veri açılışta otomatik yüklenir.
 #    - Sol panel: Tez indirme + estetik içindekiler + yanıt uzunluğu seçimi
 #    - Sağ panel: Sohbet arayüzü
-#    YENİ: Ana başlığa yazar ve danışman bilgisi eklendi
 # --------------------------------------------------------------------------------------------------
 EXAMPLES = [
     "Tezin temel problem tanımı nedir?",
@@ -551,18 +608,12 @@ def chat_step(user_message: str, history: list[tuple[str, str]], length_choice: 
 
 
 with gr.Blocks(title="Yapay Zekâ Dil Modelleri • Kaynaklı Soru‑Cevap", theme=theme, css=css, fill_height=True) as demo:
-    # YENİ: Ana başlık + Yazar/Danışman/Kapsam bilgisi eklendi
     gr.Markdown(
         """
         <div style="padding:10px 0 4px 0;">
           <h2 style="margin:0;color:#0b1220;">Yapay Zekâ Dil Modelleri — Tez Asistanı</h2>
           <div style="color:#334155;margin-top:8px;">
             Bu arayüz, 'Yapay Zekâ Dil Modelleri' tezi temel alınarak sorularınıza yanıt verir; ilgili pasajları bulur ve kaynak sayfalarıyla birlikte sunar.
-          </div>
-          <div style="color:#64748b;font-size:0.9em;margin-top:8px;">
-            📝 <strong>Yazar:</strong> Yağmur ÇORUM | 
-            👨‍🏫 <strong>Danışman:</strong> Prof. Dr. Burak ORDİN | 
-            📚 <strong>Kapsam:</strong> Bölüm 1-7 (Ana İçerik)
           </div>
         </div>
         """,
@@ -577,41 +628,13 @@ with gr.Blocks(title="Yapay Zekâ Dil Modelleri • Kaynaklı Soru‑Cevap", the
             gr.HTML(
                 """
                 <div class="toc-container">
-                  <div class="toc-card">
-                    <div class="toc-header">
-                      <span>1. GİRİŞ</span>
-                    </div>
-                  </div>
-                  <div class="toc-card">
-                    <div class="toc-header">
-                      <span>2. YAPAY ZEKÂ VE DOĞAL DİL İŞLEME</span>
-                    </div>
-                  </div>
-                  <div class="toc-card">
-                    <div class="toc-header">
-                      <span>3. DİL MODELLEMEDE ML ve DL</span>
-                    </div>
-                  </div>
-                  <div class="toc-card">
-                    <div class="toc-header">
-                      <span>4. DİL MODELLERİ</span>
-                    </div>
-                  </div>
-                  <div class="toc-card">
-                    <div class="toc-header">
-                      <span>5. TRANSFORMER TABANLI MODELLER</span>
-                    </div>
-                  </div>
-                  <div class="toc-card">
-                    <div class="toc-header">
-                      <span>6. GÜNCEL YÖNELİMLER ve ETİK</span>
-                    </div>
-                  </div>
-                  <div class="toc-card">
-                    <div class="toc-header">
-                      <span>7. SONUÇ ve DEĞERLENDİRME</span>
-                    </div>
-                  </div>
+                  <div class="toc-card"><div class="toc-header"><span>1. GİRİŞ</span></div></div>
+                  <div class="toc-card"><div class="toc-header"><span>2. YAPAY ZEKÂ VE DOĞAL DİL İŞLEME</span></div></div>
+                  <div class="toc-card"><div class="toc-header"><span>3. DİL MODELLEMEDE ML ve DL</span></div></div>
+                  <div class="toc-card"><div class="toc-header"><span>4. DİL MODELLERİ</span></div></div>
+                  <div class="toc-card"><div class="toc-header"><span>5. TRANSFORMER TABANLI MODELLER</span></div></div>
+                  <div class="toc-card"><div class="toc-header"><span>6. GÜNCEL YÖNELİMLER ve ETİK</span></div></div>
+                  <div class="toc-card"><div class="toc-header"><span>7. SONUÇ ve DEĞERLENDİRME</span></div></div>
                 </div>
                 """
             )
