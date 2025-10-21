@@ -123,31 +123,29 @@ Kullanıcı Sorusu → Embedding → Vector Search → Context Retrieval → LLM
    - `app.py`
    - `requirements.txt`
    - `data/` klasörü
-   - 
+
 ### 📁 Proje Yapısı
-
+```
 yz-tez-rehberi/
-
 ├── app.py                    # Ana uygulama
-
 ├── requirements.txt          # Python bağımlılıkları
-
 ├── README.md                 # Dokümantasyon
-
 └── data/                     # Veri dosyaları
-    
     ├── processed_docs.jsonl
-   
     ├── processed_docs.parquet
-   
     └── tez.pdf
+```
+
+Bu kodu kopyala ve README'deki proje yapısı bölümünü değiştir!
      
 ### 🖥️ Seçenek 2: Lokal Kurulum (Gelişmiş Kullanıcılar)
 ⚠️ Not: Proje Hugging Face Spaces için optimize edilmiştir. Lokal kurulumda bazı dependency sorunları yaşanabilir.
 
 ### Gereksinimler
 -Python: 3.10, 3.11 veya 3.12 (🚫 3.13 önerilmez - paket uyumsuzlukları)
+
 -Google API Key: Google AI Studio
+
 -Windows Kullanıcıları: Visual Studio Build Tools (C++ derleyici gerekli)
 
 ### Kurulum Adımları
@@ -172,12 +170,16 @@ pip install -r requirements.txt
 ### 4. .env dosyası oluştur
 ### .env dosyasını proje kök dizinine ekleyin:
 GOOGLE_API_KEY=your_api_key_here
+
 EMBEDDINGS_MODEL=trmteb/turkish-embedding-model
+
 GENERATION_MODEL=gemini-2.0-flash
+
 CHROMA_PERSIST_DIR=.chroma
 
 ### 5. Uygulamayı çalıştır
 python app.py
+
 Tarayıcınızda http://localhost:7860 adresine gidin.
 
 ### Bilinen Lokal Kurulum Sorunları
@@ -232,9 +234,9 @@ Tez içeriğinde bulunmayan bilgi sorgusu
 **Çözüm**: Top-K parametresi ve chunking stratejisi optimize edildi
 
 - Chunk size: 512 → 1500 kelime
-- 
+  
 - Overlap: 80 → 250 kelime
-- 
+  
 - Top-K: 5 (sabit tutuldu)
 
 #### 2. Over-filtering Problemi
