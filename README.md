@@ -292,12 +292,16 @@ RESPONSE_LENGTH_TO_TOKENS = {
 
 ### "Bulunamadı" yanıtlarında kaynak/uyarı gösterilmez
 if ("bulunamadı" in low_answer) or ("yeterli detay" in low_answer):
+
     return answer  # sadece yanıt, kaynak yok
 
 ### Kaynak varsa uyarı eklenir
 if pages_by_source:
+
     sources_block = "Kaynak: " + items[0][2:] if len(items) == 1 else "Kaynaklar:\n" + "\n".join(items)
+    
     warning_note = "ℹ️ Bu yanıt birden fazla sayfadan derlenmiştir..."
+    
     return answer + "\n\n" + sources_block + warning_note
 
 
