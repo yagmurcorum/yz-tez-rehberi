@@ -56,6 +56,8 @@ Kaggle notebook'unda gerçekleştirilen adımlar:
 
 **Veri Hazırlama Notebook**: [ak-ll-tez-rehberi-veri-haz-rlama.ipynb](./ak-ll-tez-rehberi-veri-haz-rlama.ipynb)
 
+**Kaggle Link**: [https://www.kaggle.com/code/yourusername/ak-ll-tez-rehberi-veri-haz-rlama](https://www.kaggle.com/code/yourusername/ak-ll-tez-rehberi-veri-haz-rlama)
+
 ### Veri Yapısı
 ```json
 {
