@@ -1,7 +1,5 @@
 # Akıllı Tez Rehberi — RAG Chatbot
 
-> **Akbank GenAI Bootcamp: Yeni Nesil Proje Kampı** kapsamında geliştirilmiş RAG (Retrieval-Augmented Generation) tabanlı tez asistanı.
-
 ## 📋 Proje Hakkında
 
 Bu proje, **"Yapay Zekâ Dil Modelleri"** lisans tezi üzerine geliştirilmiş bir RAG chatbot'udur. Kullanıcılar tez içeriği hakkında sorular sorabilir ve sistem, ilgili sayfa referanslarıyla birlikte detaylı yanıtlar üretir.
@@ -74,12 +72,12 @@ Kaggle notebook'unda gerçekleştirilen adımlar:
 ## 🏗️ Çözüm Mimarisi
 
 ### RAG Pipeline Akışı
-```
+
 Kullanıcı Sorusu → Embedding → Vector Search → Context Retrieval → LLM Generation → Kaynaklı Yanıt
-```
+
 
 ### Teknik Mimari
-```
+
 ┌─────────────────┐    ┌──────────────────┐    ┌─────────────────┐
 │   Gradio UI     │    │   LangChain      │    │   ChromaDB      │
 │                 │    │   RAG Pipeline   │    │   Vector Store  │
@@ -94,7 +92,7 @@ Kullanıcı Sorusu → Embedding → Vector Search → Context Retrieval → LLM
                        │   Generation    │
                        │                 │
                        └─────────────────┘
-```
+
 
 ### Teknoloji Seçim Gerekçeleri
 
@@ -144,140 +142,125 @@ Kullanıcı Sorusu → Embedding → Vector Search → Context Retrieval → LLM
    - `requirements.txt`
    - `data/` klasörü
    - 
-### Lokal Kurulum (Deneysel)
+### 📁 Proje Yapısı
 
-⚠️ **Önemli Not**: Bu proje tamamen Hugging Face Spaces üzerinde geliştirilmiştir. Lokal kurulum test edilmiş ancak Python sürüm uyumsuzlukları nedeniyle sorunlar yaşanmıştır.
+yz-tez-rehberi/
+├── app.py                    # Ana uygulama
+├── requirements.txt          # Python bağımlılıkları
+├── README.md                 # Dokümantasyon
+└── data/                     # Veri dosyaları
+    ├── processed_docs.jsonl
+    ├── processed_docs.parquet
+    └── tez.pdf
+     
+### 🖥️ Seçenek 2: Lokal Kurulum (Gelişmiş Kullanıcılar)
+⚠️ Not: Proje Hugging Face Spaces için optimize edilmiştir. Lokal kurulumda bazı dependency sorunları yaşanabilir.
 
-#### Test Edilen Sorunlar
+### Gereksinimler
+-Python: 3.10, 3.11 veya 3.12 (🚫 3.13 önerilmez - paket uyumsuzlukları)
+-Google API Key: Google AI Studio
+-Windows Kullanıcıları: Visual Studio Build Tools (C++ derleyici gerekli)
 
-- **Python 3.13**: `langchain-chroma==0.1.1` uyumlu değil
-- **Windows Derleme**: `chroma-hnswlib` ve `pyarrow` derleme hatası
-- **Çözüm**: `--only-binary=all` parametresi gerekli
+### Kurulum Adımları
 
-#### Gereksinimler (Test Edilmiş)
-- Python 3.10-3.12 (3.13 önerilmez)
-- Google API Key
-- Windows: Visual Studio Build Tools (derleme için)
-
-#### Kurulum Adımları (Deneysel)
-```bash
-# 1. Projeyi klonla
-git clone https://github.com/yagmurcorum/yz-tez-rehberi
+# 1. Repo'yu klonla
+git clone https://github.com/yagmurcorum/yz-tez-rehberi.git
 cd yz-tez-rehberi
 
-# 2. Virtual environment
+# 2. Virtual environment oluştur
 python -m venv venv
-venv\Scripts\activate  # Windows
-# source venv/bin/activate  # macOS/Linux
+# Windows
+venv\Scripts\activate
+# macOS/Linux
+source venv/bin/activate
 
-# 3. Paketleri kur (Windows için binary-only)
+# 3. Paketleri yükle
+# Windows için (binary-only mode)
 pip install --only-binary=all -r requirements.txt
+# macOS/Linux için
+pip install -r requirements.txt
 
-# 4. Ortam değişkenleri (.env dosyası oluştur)
-# NOT: .env dosyası repo'da bulunmaz (güvenlik)
+# 4. .env dosyası oluştur
+# .env dosyasını proje kök dizinine ekleyin:
 GOOGLE_API_KEY=your_api_key_here
 EMBEDDINGS_MODEL=trmteb/turkish-embedding-model
 GENERATION_MODEL=gemini-2.0-flash
 CHROMA_PERSIST_DIR=.chroma
 
-# 5. Çalıştır
+# 5. Uygulamayı çalıştır
 python app.py
-```
+Tarayıcınızda http://localhost:7860 adresine gidin.
 
-#### Bilinen Sorunlar
-- **Python 3.13**: Paket uyumsuzlukları
-- **Windows Derleme**: C++ build tools gerekli
-- **ChromaDB**: `chroma-hnswlib` derleme hatası
-- **PyArrow**: `cmake` bulunamıyor hatası
+### Bilinen Lokal Kurulum Sorunları
 
-**Önerilen Çözüm**: Hugging Face Spaces kullanın, lokal kurulum opsiyoneldir.
+| **Sorun**                     | **Çözüm**                                |
+| ----------------------------- | ---------------------------------------- |
+| Python 3.13 uyumsuzluğu       | Python 3.10–3.12 kullanın                |
+| chroma-hnswlib derleme hatası | `pip install --only-binary=all` kullanın |
+| cmake bulunamadı              | CMake kurun                              |
+| Visual Studio Build Tools     | VS Build Tools kurun (Windows)           |
 
-## 🎮 Web Arayüzü ve Kullanım
+💡 Öneri: Lokal kurulum sorunları yaşıyorsanız HF Spaces kullanın tüm dependencies önceden hazır!
 
-### Arayüz Özellikleri
-- **Sohbet Arayüzü**: Gerçek zamanlı soru-cevap
-- **Yanıt Uzunluğu Kontrolü**: Kısa/Orta/Uzun seçenekleri
-- **Kaynak Referansları**: Sayfa numaralarıyla birlikte
-- **Tez İndirme**: PDF dosyasına direkt erişim
-- **İçindekiler**: Bölüm bazlı navigasyon
-- **Örnek Sorular**: Hazır soru butonları
-- **Yazar/Danışman Bilgisi**: Başlıkta kalıcı gösterim
 
-### Örnek Sorular
-```
-• "Tezin temel problem tanımı nedir?"
-• "Transformer mimarisinin temel yapıtaşları nelerdir?"
-• "Kendine dikkat (self-attention) nasıl çalışır?"
-• "RNN/LSTM/GRU'nun karşılaştığı temel sorunlar nelerdir?"
-• "GPT ve BERT hangi görevlerde daha başarılıdır?"
-• "Temel doğal dil işleme teknikleri nelerdir?"
-• "Yapay zekâ nasıl tanımlanır? Kapsadığı alt alanlar nelerdir?"
-• "Çok modlu modellerin öne çıkan örnekleri hangileri?"
-• "Etik bölümünde hangi riskler tartışılıyor?"
-• "Gelecek çalışmalar için öneriler nelerdir?"
-```
+### 🎮 Web Arayüzü ve Kullanım
 
-### Yanıt Formatı
-```
-[Detaylı yanıt metni]
+Sohbet Arayüzü: Gerçek zamanlı soru-cevap
+İçindekiler: Bölüm bazlı navigasyon
+Örnek Sorular: Hazır soru butonları
+Yazar/Danışman Bilgisi: Başlıkta kalıcı gösterim
+![Ana Sayfa](screenshots/anasayfa.png)
 
-Kaynak: Yapay Zekâ Dil Modelleri s. 15, 23, 45
+Yanıt Uzunluğu Kontrolü: Kısa/Orta/Uzun seçenekleri
+Kaynak Referansları: Sayfa numaralarıyla birlikte
+![Kısa](screenshots/cevap1.png)
+![Orta](screenshots/cevap2.png)
+![Uzun](screenshots/cevap3.png)
 
-ℹ️ Bu yanıt birden fazla sayfadan derlenmiştir. Tam bilgi için kaynak sayfalara göz atın.
-```
+Tez İndirme: PDF dosyasına direkt erişim
+![Tez İndirme](screenshots/indirmebtn.png)
 
-## 📈 Elde Edilen Sonuçlar
+Tez içeriğinde bulunmayan bilgi sorgusu
+![İçerikte bulunamadı](screenshots/icerik.png)
+
+
+### 📈 Elde Edilen Sonuçlar
 
 ### Başarılı Örnekler
+
 ✅ **Doğru Kaynak Referansları**: Sistem genellikle ilgili sayfaları doğru tespit eder
+
 ✅ **Türkçe Anlama**: Akademik Türkçe metinleri başarıyla işler
+
 ✅ **Bağlam Korunması**: Chunking stratejisi sayesinde bağlam kaybı minimize edilir
+
 ✅ **Kullanıcı Deneyimi**: Sezgisel arayüz ve hızlı yanıt süreleri
 
 ### Tespit Edilen Sorunlar ve Çözümler
 
-#### 1. Retrieval Varyasyonu Problemi
 **Sorun**: Aynı soru farklı zamanlarda farklı sayfa kombinasyonları getirebiliyor
-```
-Soru: "NLP teknikleri nelerdir?"
-- İlk deneme: Sayfa 19, 20, 22 (yanlış)
-- İkinci deneme: Sayfa 11 (doğru - asıl bilgi burada)
-```
 
 **Çözüm**: Top-K parametresi ve chunking stratejisi optimize edildi
+
 - Chunk size: 512 → 1500 kelime
+- 
 - Overlap: 80 → 250 kelime
+- 
 - Top-K: 5 (sabit tutuldu)
 
 #### 2. Over-filtering Problemi
 **Sorun**: Similarity threshold çok yüksek olunca sistem hiç yanıt vermiyor
-```
+
 Threshold 0.7 → "Bu konu tezde bulunamadı" (yanlış)
+
 Threshold kaldırıldı → Normal çalışma
-```
 
 **Çözüm**: Strict filtering kaldırıldı, skor bazlı filtreleme yerine basit similarity search kullanıldı
-
-#### 3. Kaynak Uyarı Mantığı
-**Sorun**: "Bulunamadı" yanıtlarında da kaynak uyarısı görünüyordu
-```
-"Bu konu tezde yeterli detayla bulunamadı.
-Kaynak: s. 33
-ℹ️ Bu yanıt birden fazla sayfadan derlenmiştir."
-```
-
-**Çözüm**: Uyarı sadece gerçek kaynak bulunduğunda gösteriliyor
-
-### Performans Metrikleri
-- **Yanıt Süresi**: ~3-5 saniye (ChromaDB + Gemini)
-- **Doğruluk Oranı**: ~85% (manuel test)
-- **Kaynak Doğruluğu**: ~80% (sayfa referansları)
-- **Kullanıcı Memnuniyeti**: Yüksek (kaynak referansları sayesinde)
 
 ## 🔧 Teknik Detaylar
 
 ### RAG Pipeline Parametreleri
-```python
+
 # Chunking (Kaggle notebook'ta)
 CHUNK_SIZE = 1500  # kelime
 CHUNK_OVERLAP = 250  # kelime
@@ -294,14 +277,14 @@ MAX_TOKENS = 1024   # yanıt uzunluğu
 ```
 
 ### Sayfa Filtreleme
-```python
+
 PDF_PAGE_START = 13  # tez içeriği başlangıcı
 PDF_PAGE_END = 104   # tez içeriği bitişi
 # 1-12: ön sayfalar, 105+: kaynakça/ekler
-```
+
 
 ### Yanıt Uzunluğu Kontrolü
-```python
+
 RESPONSE_LENGTH_TO_TOKENS = {
     "Kısa": 200,   # temel bilgiler (optimize edildi)
     "Orta": 800,   # detaylı açıklama
@@ -310,7 +293,7 @@ RESPONSE_LENGTH_TO_TOKENS = {
 ```
 
 ### Kaynak Uyarı Mantığı
-```python
+
 # "Bulunamadı" yanıtlarında kaynak/uyarı gösterilmez
 if ("bulunamadı" in low_answer) or ("yeterli detay" in low_answer):
     return answer  # sadece yanıt, kaynak yok
@@ -320,10 +303,10 @@ if pages_by_source:
     sources_block = "Kaynak: " + items[0][2:] if len(items) == 1 else "Kaynaklar:\n" + "\n".join(items)
     warning_note = "ℹ️ Bu yanıt birden fazla sayfadan derlenmiştir..."
     return answer + "\n\n" + sources_block + warning_note
-```
+
 
 ### Retrieval Fonksiyonu
-```python
+
 def retrieve(query: str, k: int):
     """Sorgu embedding'i ile Chroma'dan en ilgili k belge parçasını getirir."""
     try:
@@ -333,7 +316,6 @@ def retrieve(query: str, k: int):
     except Exception:
         docs = vectorstore.similarity_search(query, k=k)
         return docs
-```
 
 ## 🚨 Bilinen Sınırlamalar
 
@@ -341,8 +323,8 @@ def retrieve(query: str, k: int):
 2. **Sayfa Referansları**: Bazen yanlış sayfa numaraları gösterilebilir
 3. **Bağlam Kaybı**: Çok uzun sorularda bağlam kopabilir
 4. **Türkçe Özel Durumlar**: Bazı akademik terimlerde zorlanabilir
-
-## 🔮 Gelecek Geliştirmeler
+   
+ ## 🔮 Gelecek Geliştirmeler
 
 - [ ] **Hybrid Search**: Embedding + keyword search kombinasyonu
 - [ ] **Re-ranking**: Sonuçları yeniden sıralama algoritması
@@ -368,12 +350,5 @@ def retrieve(query: str, k: int):
 ## 📄 Lisans
 
 Bu proje eğitim amaçlıdır. Tez içeriği yazara (Yağmur ÇORUM) aittir.
-
-## 🙏 Teşekkürler
-
-- **Akbank GenAI Bootcamp** ekibine
-- **Hugging Face** platformuna
-- **Google Gemini** API'sine
-- **LangChain** topluluğuna
 
 
