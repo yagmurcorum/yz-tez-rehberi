@@ -321,7 +321,6 @@ def retrieve(query: str, k: int):
         docs = vectorstore.similarity_search(query, k=k)
         return docs
 ```
-```
 
 ## 🚨 Bilinen Sınırlamalar
 
