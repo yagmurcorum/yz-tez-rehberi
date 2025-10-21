@@ -200,21 +200,31 @@ Tarayıcınızda http://localhost:7860 adresine gidin.
 ### 🎮 Web Arayüzü ve Kullanım
 
 Sohbet Arayüzü: Gerçek zamanlı soru-cevap
+
 İçindekiler: Bölüm bazlı navigasyon
+
 Örnek Sorular: Hazır soru butonları
+
 Yazar/Danışman Bilgisi: Başlıkta kalıcı gösterim
+
 ![Ana Sayfa](screenshots/anasayfa.png)
 
 Yanıt Uzunluğu Kontrolü: Kısa/Orta/Uzun seçenekleri
+
 Kaynak Referansları: Sayfa numaralarıyla birlikte
+
 ![Kısa](screenshots/cevap1.png)
+
 ![Orta](screenshots/cevap2.png)
+
 ![Uzun](screenshots/cevap3.png)
 
 Tez İndirme: PDF dosyasına direkt erişim
+
 ![Tez İndirme](screenshots/indirmebtn.png)
 
 Tez içeriğinde bulunmayan bilgi sorgusu
+
 ![İçerikte bulunamadı](screenshots/icerik.png)
 
 
