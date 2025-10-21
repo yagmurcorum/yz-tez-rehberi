@@ -60,6 +60,7 @@ GENERATION_MODEL = os.getenv("GENERATION_MODEL", "gemini-2.0-flash")
 CHROMA_PERSIST_DIR = os.getenv("CHROMA_PERSIST_DIR", ".chroma")
 
 # STRICT RAG: açık‑alan fallback kapalı (yalnızca tezden yanıt ver).
+# Gelecekte açık alan fallback özelliği eklenebilir.
 ALLOW_OPEN_DOMAIN_FALLBACK = os.getenv("ALLOW_OPEN_DOMAIN_FALLBACK", "false").lower() == "true"
 
 # Sayfa filtreleme: PDF sayfa 13-104 arası tez içeriği (1-12: ön sayfalar, 105+: kaynakça/ekler)
@@ -118,6 +119,9 @@ def split_into_chunks(text: str, size: int = 800, overlap: int = 120) -> List[st
       - overlap: art arda gelen parçalar arasındaki ortak kelime sayısı
     Not:
       - RAG'de 512–800 kelime iyi bir başlangıç aralığıdır; overlap 80–120 önerilir.
+      -Bu fonksiyon şu anda kullanılmamaktadır çünkü veri parçalama 
+       Kaggle'da önceden yapılmıştır. Farklı veri kaynakları için 
+       gelecekte kullanılabilir.
     """
     words = (text or "").split()
     if not words:
@@ -145,6 +149,8 @@ def pdf_to_thesis_page(pdf_page: int) -> int:
     """
     PDF sayfa numarasını tez sayfa numarasına çevirir.
     Örnek: PDF sayfa 1 → Tez sayfa 1 (offset 0 ile)
+    Not: Şu anda kullanılmamaktadır. Farklı offset değerleri için 
+    gelecekte kullanılabilir.
     """
     return pdf_page + PDF_TO_THESIS_OFFSET
 
