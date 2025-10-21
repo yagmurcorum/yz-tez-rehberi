@@ -76,24 +76,6 @@ Kaggle notebook'unda gerçekleştirilen adımlar:
 Kullanıcı Sorusu → Embedding → Vector Search → Context Retrieval → LLM Generation → Kaynaklı Yanıt
 
 
-### Teknik Mimari
-
-┌─────────────────┐    ┌──────────────────┐    ┌─────────────────┐
-│   Gradio UI     │    │   LangChain      │    │   ChromaDB      │
-│                 │    │   RAG Pipeline   │    │   Vector Store  │
-│ • Chat Interface│◄──►│                  │◄──►│                 │
-│ • Response Ctrl │    │ • Retrieval      │    │ • Embeddings    │
-│ • Source Display│    │ • Prompt Builder │    │ • Metadata      │
-└─────────────────┘    └──────────────────┘    └─────────────────┘
-                                │
-                                ▼
-                       ┌─────────────────┐
-                       │   Gemini 2.0    │
-                       │   Generation    │
-                       │                 │
-                       └─────────────────┘
-
-
 ### Teknoloji Seçim Gerekçeleri
 
 **Embedding Model**: `trmteb/turkish-embedding-model`
@@ -145,12 +127,19 @@ Kullanıcı Sorusu → Embedding → Vector Search → Context Retrieval → LLM
 ### 📁 Proje Yapısı
 
 yz-tez-rehberi/
+
 ├── app.py                    # Ana uygulama
+
 ├── requirements.txt          # Python bağımlılıkları
+
 ├── README.md                 # Dokümantasyon
+
 └── data/                     # Veri dosyaları
+    
     ├── processed_docs.jsonl
+   
     ├── processed_docs.parquet
+   
     └── tez.pdf
      
 ### 🖥️ Seçenek 2: Lokal Kurulum (Gelişmiş Kullanıcılar)
@@ -163,31 +152,31 @@ yz-tez-rehberi/
 
 ### Kurulum Adımları
 
-# 1. Repo'yu klonla
+### 1. Repo'yu klonla
 git clone https://github.com/yagmurcorum/yz-tez-rehberi.git
 cd yz-tez-rehberi
 
-# 2. Virtual environment oluştur
+### 2. Virtual environment oluştur
 python -m venv venv
-# Windows
+### Windows
 venv\Scripts\activate
-# macOS/Linux
+### macOS/Linux
 source venv/bin/activate
 
-# 3. Paketleri yükle
-# Windows için (binary-only mode)
+### 3. Paketleri yükle
+### Windows için (binary-only mode)
 pip install --only-binary=all -r requirements.txt
-# macOS/Linux için
+### macOS/Linux için
 pip install -r requirements.txt
 
-# 4. .env dosyası oluştur
-# .env dosyasını proje kök dizinine ekleyin:
+### 4. .env dosyası oluştur
+### .env dosyasını proje kök dizinine ekleyin:
 GOOGLE_API_KEY=your_api_key_here
 EMBEDDINGS_MODEL=trmteb/turkish-embedding-model
 GENERATION_MODEL=gemini-2.0-flash
 CHROMA_PERSIST_DIR=.chroma
 
-# 5. Uygulamayı çalıştır
+### 5. Uygulamayı çalıştır
 python app.py
 Tarayıcınızda http://localhost:7860 adresine gidin.
 
@@ -257,22 +246,26 @@ Threshold kaldırıldı → Normal çalışma
 
 **Çözüm**: Strict filtering kaldırıldı, skor bazlı filtreleme yerine basit similarity search kullanıldı
 
-## 🔧 Teknik Detaylar
+### 🔧 Teknik Detaylar
 
 ### RAG Pipeline Parametreleri
 
-# Chunking (Kaggle notebook'ta)
+### Chunking (Kaggle notebook'ta)
 CHUNK_SIZE = 1500  # kelime
+
 CHUNK_OVERLAP = 250  # kelime
 
-# Retrieval (app.py'da)
+### Retrieval (app.py'da)
 TOP_K = 5  # en ilgili 5 parça
-# similarity_search_with_relevance_scores kullanılıyor (fallback: similarity_search)
+similarity_search_with_relevance_scores kullanılıyor (fallback: similarity_search)
 
-# Generation
+### Generation
 TEMPERATURE = 0.25  # düşük (kaynağa sadakat)
+
 TOP_P = 0.95        # örnekleme çeşitliliği
+
 TOP_K = 40          # örnekleme çeşitliliği
+
 MAX_TOKENS = 1024   # yanıt uzunluğu
 ```
 
@@ -294,11 +287,11 @@ RESPONSE_LENGTH_TO_TOKENS = {
 
 ### Kaynak Uyarı Mantığı
 
-# "Bulunamadı" yanıtlarında kaynak/uyarı gösterilmez
+### "Bulunamadı" yanıtlarında kaynak/uyarı gösterilmez
 if ("bulunamadı" in low_answer) or ("yeterli detay" in low_answer):
     return answer  # sadece yanıt, kaynak yok
 
-# Kaynak varsa uyarı eklenir
+### Kaynak varsa uyarı eklenir
 if pages_by_source:
     sources_block = "Kaynak: " + items[0][2:] if len(items) == 1 else "Kaynaklar:\n" + "\n".join(items)
     warning_note = "ℹ️ Bu yanıt birden fazla sayfadan derlenmiştir..."
@@ -308,13 +301,20 @@ if pages_by_source:
 ### Retrieval Fonksiyonu
 
 def retrieve(query: str, k: int):
+
     """Sorgu embedding'i ile Chroma'dan en ilgili k belge parçasını getirir."""
     try:
+    
         results = vectorstore.similarity_search_with_relevance_scores(query, k=k)
+        
         docs = [doc for doc, _score in results]
+        
         return docs
+        
     except Exception:
+    
         docs = vectorstore.similarity_search(query, k=k)
+        
         return docs
 
 ## 🚨 Bilinen Sınırlamalar
