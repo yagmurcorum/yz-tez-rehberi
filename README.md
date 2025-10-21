@@ -137,8 +137,6 @@ yz-tez-rehberi/
     ├── processed_docs.parquet
     └── tez.pdf
 ```
-
-Bu kodu kopyala ve README'deki proje yapısı bölümünü değiştir!
      
 ### 🖥️ Seçenek 2: Lokal Kurulum (Gelişmiş Kullanıcılar)
 ⚠️ Not: Proje Hugging Face Spaces için optimize edilmiştir. Lokal kurulumda bazı dependency sorunları yaşanabilir.
