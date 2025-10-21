@@ -264,35 +264,31 @@ Threshold kaldırıldı → Normal çalışma
 ### 🔧 Teknik Detaylar
 
 ### RAG Pipeline Parametreleri
-
-### Chunking (Kaggle notebook'ta)
+```python
+# Chunking (Kaggle notebook'ta)
 CHUNK_SIZE = 1500  # kelime
-
 CHUNK_OVERLAP = 250  # kelime
 
-### Retrieval (app.py'da)
+# Retrieval (app.py'da)
 TOP_K = 5  # en ilgili 5 parça
-similarity_search_with_relevance_scores kullanılıyor (fallback: similarity_search)
+# similarity_search_with_relevance_scores kullanılıyor (fallback: similarity_search)
 
-### Generation
+# Generation
 TEMPERATURE = 0.25  # düşük (kaynağa sadakat)
-
 TOP_P = 0.95        # örnekleme çeşitliliği
-
 TOP_K = 40          # örnekleme çeşitliliği
-
 MAX_TOKENS = 1024   # yanıt uzunluğu
 ```
 
 ### Sayfa Filtreleme
-
+```python
 PDF_PAGE_START = 13  # tez içeriği başlangıcı
 PDF_PAGE_END = 104   # tez içeriği bitişi
 # 1-12: ön sayfalar, 105+: kaynakça/ekler
-
+```
 
 ### Yanıt Uzunluğu Kontrolü
-
+```python
 RESPONSE_LENGTH_TO_TOKENS = {
     "Kısa": 200,   # temel bilgiler (optimize edildi)
     "Orta": 800,   # detaylı açıklama
@@ -301,40 +297,31 @@ RESPONSE_LENGTH_TO_TOKENS = {
 ```
 
 ### Kaynak Uyarı Mantığı
-
-### "Bulunamadı" yanıtlarında kaynak/uyarı gösterilmez
+```python
+# "Bulunamadı" yanıtlarında kaynak/uyarı gösterilmez
 if ("bulunamadı" in low_answer) or ("yeterli detay" in low_answer):
-
     return answer  # sadece yanıt, kaynak yok
 
-### Kaynak varsa uyarı eklenir
+# Kaynak varsa uyarı eklenir
 if pages_by_source:
-
     sources_block = "Kaynak: " + items[0][2:] if len(items) == 1 else "Kaynaklar:\n" + "\n".join(items)
-    
     warning_note = "ℹ️ Bu yanıt birden fazla sayfadan derlenmiştir..."
-    
     return answer + "\n\n" + sources_block + warning_note
-
+```
 
 ### Retrieval Fonksiyonu
-
+```python
 def retrieve(query: str, k: int):
-
     """Sorgu embedding'i ile Chroma'dan en ilgili k belge parçasını getirir."""
     try:
-    
         results = vectorstore.similarity_search_with_relevance_scores(query, k=k)
-        
         docs = [doc for doc, _score in results]
-        
         return docs
-        
     except Exception:
-    
         docs = vectorstore.similarity_search(query, k=k)
-        
         return docs
+```
+```
 
 ## 🚨 Bilinen Sınırlamalar
 
