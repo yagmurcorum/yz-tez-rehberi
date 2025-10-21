@@ -152,6 +152,7 @@ Bu kodu kopyala ve README'deki proje yapısı bölümünü değiştir!
 
 ### 1. Repo'yu klonla
 git clone https://github.com/yagmurcorum/yz-tez-rehberi.git
+
 cd yz-tez-rehberi
 
 ### 2. Virtual environment oluştur
