@@ -354,4 +354,6 @@ def retrieve(query: str, k: int):
 
 Bu proje eğitim amaçlıdır. Tez içeriği yazara (Yağmur ÇORUM) aittir.
 
+## Medium : https://medium.com/@corumyagmur/rag-chroma-ve-gemini-ile-akıllı-tez-rehberi-7273898c13bc
+
 
